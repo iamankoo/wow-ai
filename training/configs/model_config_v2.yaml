@@ -1,0 +1,44 @@
+# WOW Brain v2 training configuration - first training run on the
+# human-verified + machine-accelerated 33K annotation dataset
+# (training/datasets/versions/v3.2.0-train-ready/).
+#
+# Architecture and most hyperparameters are DELIBERATELY kept identical to
+# v1's config (model_config_v1.yaml) - the only real experimental variable
+# in this run is the dataset (33K vs v1's 615 hand-authored examples).
+# Keeping base_model/max_length/learning_rate/batch_size/early_stopping
+# identical to v1 keeps the eventual v1-vs-v2 comparison meaningful (see
+# docs/TRAINING.md "Why bert-tiny was replaced" / "v1 results" for why this
+# base model was chosen over a different architecture in the first place -
+# nothing about that reasoning has changed, so v2 reuses it rather than
+# inventing a new architecture).
+#
+# class_weighting stays true: the v3.2.0-train-ready dataset has severe
+# class imbalance (intent 1318:1, action 9697:1 - see STATS.json in the
+# dataset version dir), same failure mode class_weighting was built to
+# counter for v1.
+
+base_model: "distilbert-base-multilingual-cased"
+seed: 42
+max_length: 64
+batch_size: 16
+learning_rate: 0.00003
+epochs: 20
+val_fraction: 0.15   # unused by train.py itself (val.jsonl is pre-built) - kept for schema/documentation consistency with v1
+class_weighting: true
+early_stopping_patience: 4
+training_device: "auto"   # CUDA -> MPS -> CPU; this machine has no CUDA GPU (AMD integrated graphics, CPU-only torch build) so this resolves to CPU
+
+heads:
+  - name: intent
+    label_field: intent
+    required: true
+  - name: context
+    label_field: context_mode
+    required: false   # not every record has a context_mode
+  - name: action
+    label_field: action
+    required: false   # not every record has an action
+
+dataset_dir: "training/datasets/versions/v3.2.0-train-ready"
+model_version: "v2"
+output_dir: "training/models/wow-brain/v2"

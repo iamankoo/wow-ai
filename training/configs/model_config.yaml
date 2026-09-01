@@ -1,0 +1,34 @@
+# WOW Brain v0 training configuration.
+#
+# base_model: an open-weight encoder from the Hugging Face Hub. The default
+# below (prajjwal1/bert-tiny) is chosen specifically because it is small
+# enough to fine-tune on CPU in this environment (no GPU available) as a
+# genuine, reproducible smoke test - not a placeholder/fake run.
+#
+# For a production-quality model, swap base_model to a multilingual
+# encoder (e.g. "distilbert-base-multilingual-cased") on a GPU-equipped
+# machine - no code changes required, only this config value. See
+# docs/TRAINING.md "GPU requirements for production training".
+
+base_model: "prajjwal1/bert-tiny"
+seed: 42
+max_length: 64
+batch_size: 8
+learning_rate: 0.00005
+epochs: 8
+val_fraction: 0.15
+
+heads:
+  - name: intent
+    label_field: intent
+    required: true
+  - name: context
+    label_field: context_mode
+    required: false   # not every record has a context_mode
+  - name: action
+    label_field: action
+    required: false   # not every record has an action
+
+dataset_dir: "training/datasets/processed"
+model_version: "v0"
+output_dir: "training/models/wow-brain/v0"

@@ -1,0 +1,42 @@
+# WOW Brain v3 training configuration - trains on v3.3.0-answer-call
+# (66,000 records: the existing 33,000 + 30,000 sampled ANSWER_CALL + 3,000
+# hard negatives). This is a FRESH experiment, not a continuation of v2:
+# v2 was trained on the old 33K-only dataset (v3.2.0-train-ready) and its
+# checkpoint is intentionally NOT resumed here - v3 initializes from the
+# same pretrained base model v1/v2 did, exactly as train.py always does
+# when output_dir has no existing checkpoint.pt.
+#
+# Architecture and hyperparameters are kept identical to v1/v2 - reusing
+# the existing WOW training implementation rather than inventing a new one.
+# The only real experimental variables are the dataset (66K vs 33K) and the
+# training device (GPU, once run on hardware that actually has one - this
+# preparation machine does not, see the pre-flight report).
+
+base_model: "distilbert-base-multilingual-cased"
+seed: 42
+max_length: 64
+batch_size: 16   # matches v1/v2 - a proven-safe default; see the report for how to raise this once real GPU VRAM is known
+learning_rate: 0.00003
+epochs: 20
+val_fraction: 0.15   # unused by train.py itself (val.jsonl is pre-built) - kept for schema/documentation consistency
+class_weighting: true
+early_stopping_patience: 4
+training_device: "cpu"   # explicit: this machine has no CUDA GPU and no viable AMD GPU backend (investigated and
+                          # documented in docs/TRAINING.md - ROCm Windows is RDNA4-only, DirectML is unmaintained
+                          # and caps PyTorch at 2.3.1). CPU chosen explicitly, not "auto", so this is never
+                          # ambiguous or silently mislabeled as GPU training.
+
+heads:
+  - name: intent
+    label_field: intent
+    required: true
+  - name: context
+    label_field: context_mode
+    required: false   # not every record has a context_mode
+  - name: action
+    label_field: action
+    required: false   # not every record has an action
+
+dataset_dir: "training/datasets/versions/v3.3.0-answer-call"
+model_version: "v3"
+output_dir: "training/models/wow-brain/v3"

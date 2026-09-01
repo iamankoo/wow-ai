@@ -1,0 +1,44 @@
+# WOW Brain v1.1 training configuration.
+#
+# Same base model and training strategy as v1 - v1.1 is a dataset-only
+# improvement, not an architecture change. The v2.1.0 dataset (see
+# training/datasets/versions/v2.1.0/) specifically grows the two areas v1's
+# evaluation showed as weakest: UNKNOWN accuracy (20%, n=5) and context
+# accuracy (50%, trained on only 94 examples). See docs/TRAINING.md
+# "v1.1 dataset" for the full breakdown.
+#
+# dataset_dir points at the versioned, frozen v2.1.0 snapshot (not the
+# live training/datasets/processed/) so this config always reproduces the
+# same training run even if the live dataset changes again later.
+#
+# training_device: "auto" here, but can be overridden without editing this
+# file via the TRAINING_DEVICE environment variable (see docs/TRAINING.md
+# "Train it yourself") - e.g. `$env:TRAINING_DEVICE="cuda"`. An explicit
+# "cuda"/"mps" request fails loudly if that device isn't actually
+# available, rather than silently training on CPU.
+
+base_model: "distilbert-base-multilingual-cased"
+seed: 42
+max_length: 64
+batch_size: 16
+learning_rate: 0.00003
+epochs: 20
+val_fraction: 0.15
+class_weighting: true
+early_stopping_patience: 4
+training_device: "auto"   # override with $env:TRAINING_DEVICE=cuda|mps|cpu|auto
+
+heads:
+  - name: intent
+    label_field: intent
+    required: true
+  - name: context
+    label_field: context_mode
+    required: false   # not every record has a context_mode
+  - name: action
+    label_field: action
+    required: false   # not every record has an action
+
+dataset_dir: "training/datasets/versions/v2.1.0/processed"
+model_version: "v1.1"
+output_dir: "training/models/wow-brain/v1.1"

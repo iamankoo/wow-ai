@@ -1,0 +1,6 @@
+# Optional dependencies for MODEL_PROVIDER=local_wow (backend/app/providers/llm/local_wow.py).
+# Not required for the default MODEL_PROVIDER=rule_based deployment.
+# Install with: pip install -r requirements.txt -r requirements-local-model.txt
+torch>=2.0
+transformers>=4.40
+sentencepiece>=0.1.99

@@ -1,0 +1,57 @@
+# Environment / secrets
+.env
+*.env.local
+
+# Python
+backend/.venv/
+**/__pycache__/
+**/.pytest_cache/
+*.pyc
+
+# Flutter / Dart
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/build/
+mobile/android/local.properties
+mobile/android/.gradle/
+mobile/android/app/build/
+mobile/android/build/
+mobile/android/.kotlin/
+mobile/ios/Flutter/Flutter.podspec
+mobile/ios/Pods/
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# WOW AI training artifacts (model checkpoints/weights - never git, see docs/KAGGLE_TRAINING.md)
+training/models/
+*.safetensors
+checkpoint.pt
+checkpoint_best.pt
+
+# WOW AI finalized/versioned datasets (large, reproducible from the pipeline - not git-tracked)
+training/datasets/versions/
+
+# WOW AI generated training artifacts
+training/datasets/annotation/*.db
+training/datasets/processed/
+training/datasets/reports/
+training/datasets/review/
+training/datasets/v3_raw/
+training/datasets/answer_call_*.jsonl
+training/datasets/hard_negatives.jsonl
+training/evaluation/latest_report.json
+
+# WOW AI raw bulk source corpora (large ingest inputs to training/pipeline/ingest/ -
+# reproducible/replaceable, not meant to live in ordinary git history; small
+# reusable seed.jsonl files under training/datasets/<category>/ are NOT covered
+# by this rule and remain tracked)
+training/datasets/*_dataset_*.txt

@@ -1,0 +1,47 @@
+# WOW Brain v1 training configuration.
+#
+# base_model: switched from v0's prajjwal1/bert-tiny to a multilingual
+# encoder. This is not a "bigger model fixes everything" move - it targets a
+# specific, verified root cause: bert-tiny's vocabulary is bert-base-uncased
+# (English-only WordPiece). Devanagari Hindi text tokenizes into isolated,
+# largely meaningless single-character fragments under that vocab (verified
+# by hand - see docs/TRAINING.md "Why bert-tiny was replaced"), and even
+# Roman Hindi/Hinglish subwords carry no real semantics since the model was
+# never pretrained on Hindi. distilbert-base-multilingual-cased is trained
+# on 104 languages including Hindi, tokenizes both Devanagari and Romanized
+# Hindi into meaningful subwords with zero UNKs, and at ~135M parameters
+# (6 layers) is still small enough to fine-tune on CPU on this dataset size
+# (tens of minutes on a modest laptop CPU - see the actual wall-clock
+# numbers in training/models/wow-brain/v1/metadata.json) and to run
+# real-time inference for a call assistant - not a "huge" model. See
+# docs/MODEL_ARCHITECTURE.md.
+#
+# class_weighting + early_stopping_patience are v1's direct countermeasures
+# to the v0 SET_CONTEXT/BUSY majority-class mode collapse documented in
+# docs/TRAINING.md - not just "more epochs".
+
+base_model: "distilbert-base-multilingual-cased"
+seed: 42
+max_length: 64
+batch_size: 16
+learning_rate: 0.00003
+epochs: 20
+val_fraction: 0.15
+class_weighting: true
+early_stopping_patience: 4
+training_device: "auto"   # CUDA -> MPS -> CPU; this run used CPU (no GPU present)
+
+heads:
+  - name: intent
+    label_field: intent
+    required: true
+  - name: context
+    label_field: context_mode
+    required: false   # not every record has a context_mode
+  - name: action
+    label_field: action
+    required: false   # not every record has an action
+
+dataset_dir: "training/datasets/processed"
+model_version: "v1"
+output_dir: "training/models/wow-brain/v1"

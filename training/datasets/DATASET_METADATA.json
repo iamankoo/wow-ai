@@ -1,0 +1,28 @@
+{
+  "dataset_version": "2.1.0",
+  "schema_version": "1.0.0",
+  "created_at": "2026-08-26T06:41:54.844389+00:00",
+  "num_examples": 866,
+  "counts_by_category": {
+    "intents": 608,
+    "contexts": 142,
+    "call_scenarios": 63,
+    "conversations": 37,
+    "summaries": 16
+  },
+  "languages": [
+    "en",
+    "hi",
+    "hinglish"
+  ],
+  "categories": [
+    "intents",
+    "contexts",
+    "call_scenarios",
+    "conversations",
+    "summaries"
+  ],
+  "source_type": "synthetic_hand_authored",
+  "validation_status": "valid",
+  "notes": "v2.1.0 (WOW Brain v1.1 training data) - targeted expansion of v2.0.0 (WOW Brain v1's dataset, frozen at training/datasets/versions/v2.0.0/), which is unchanged and was not overwritten. Adds UNKNOWN coverage (v1's weakest per-intent accuracy at 20%), context-mode coverage across all 7 modes (context accuracy was v1's weakest head at 50%), and 25 more hard negatives. v2.0.0 in turn expanded the v0/dataset_version 1.0.0 seed (~117 examples) to fix the SET_CONTEXT/BUSY majority-class mode collapse documented in docs/TRAINING.md. No real user/production conversation data is included."
+}
