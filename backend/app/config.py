@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     context_confidence_threshold: float = 0.6
     action_confidence_threshold: float = 0.6
 
+    # AgentRuntime selection - "wow_brain" (default, v0's straight-line
+    # context -> generate -> persist flow) or "wow_agent" (opt-in, the
+    # fuller state/memory/policy/tool orchestrator - see app/agent/).
+    agent_runtime: str = "wow_brain"
+    # Minimum overall model confidence required before a sensitive action
+    # (see app.agent.policy.SENSITIVE_ACTIONS) is authorized outright,
+    # rather than routed to CLARIFY. Only used by AGENT_RUNTIME=wow_agent.
+    policy_min_sensitive_confidence: float = 0.75
+
 
 @lru_cache
 def get_settings() -> Settings:

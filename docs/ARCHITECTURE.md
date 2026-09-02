@@ -62,7 +62,7 @@ needs versioned, production-safe migrations.
 | `TelephonyProvider`     | *(contract only)*                                          | Android `CallScreeningService`/`InCallService` bridge |
 | `MemoryStore`           | `PgVectorMemoryStore` (Postgres + pgvector)                 | Same store, real embeddings once a local embedding model is wired in |
 | `ContextEngine`         | `DefaultContextEngine` (contact + profile + memory lookup)  | Add conversation history summarization |
-| `AgentRuntime`          | `WowBrain` (v0)                                             | Multi-node LangGraph-style state machine |
+| `AgentRuntime`          | `WowBrain` (v0, default) / `WowAgent` (opt-in, `AGENT_RUNTIME=wow_agent`) | `WowAgent` promoted to default once proven on real traffic |
 
 STT/TTS/Telephony are contract-only in Phase 1 because they require real
 audio/call infrastructure that only exists once the Android call-handling
@@ -83,6 +83,54 @@ engine. The seams are exactly what a real multi-node LangGraph-style graph
 would plug into next: swap `WowBrain.handle_input` for a graph executor that
 calls the same `LanguageModelProvider` / `ContextEngine` / `StateRepository`
 at each node, without changing the `AgentRuntime` contract the API depends on.
+
+## WOW Agent orchestrator - opt-in (backend/app/agent/)
+
+`WowBrain` v0 above is a straight-line 3-step flow. `WowAgent`
+(`backend/app/agent/orchestrator.py`, select with `AGENT_RUNTIME=wow_agent`)
+implements the same `AgentRuntime` contract but runs the fuller flow the
+product vision calls for - opt-in today, the same rollout pattern already
+used for `MODEL_PROVIDER=local_wow` (real and tested, not yet the default
+until proven):
+
+```
+state loaded  -> record caller turn (ConversationState, app/agent/state.py)
+             -> ContextEngine.build_context()   (contact, active persona, memories)
+             -> LanguageModelProvider.generate() (intent/context/action + confidence)
+             -> validate action against taxonomy  (app.brain.taxonomy.is_valid_action -
+                                                     an out-of-taxonomy prediction is
+                                                     never trusted, regardless of its
+                                                     reported confidence)
+             -> ConfidencePolicy.assess()          (per-head confidence vs threshold)
+             -> PolicyEngine.evaluate()            (app/agent/policy.py: ALLOW / CLARIFY /
+                                                     REFUSE / HANDOFF)
+             -> ToolRegistry.invoke()  (only on ALLOW + a mapped action; authorization,
+                                         schema validation, timeout, and audit on every call -
+                                         app/agent/tools.py)
+             -> generate_response()    (app/agent/response.py: LLM reply on ALLOW, a
+                                         verdict-specific template otherwise - never blank)
+             -> state persisted back (ConversationState.to_dict() via StateRepository)
+```
+
+`ConversationState` (`app/agent/state.py`) is the explicit, serializable
+session object every step reads and writes - session/user id, lifecycle
+status (`CallLifecycleStatus`: created/ringing/connected/listening/
+thinking/responding/ending/ended/processing/stored/expired), transcript,
+intent/context/candidate action, memory results, tool results, policy
+decision, confidence. It is never a hidden global: it is loaded from and
+saved back to the existing `AgentState` table (as a JSON blob under key
+`"conversation_state"`) on every turn.
+
+The initial tool set (`app/agent/builtin_tools.py`) is deliberately small
+and real, not a placeholder list: `save_memory` (backed by the existing
+`MemoryStore`) and `create_summary` (backed by a new `SummaryRepository`,
+mirroring `StateRepository`'s ABC + SQL + in-memory-test-double pattern).
+Actions that need a real API-side effect that doesn't exist yet
+(`SET_CONTEXT` actually flipping a `ContextProfile`, `ANSWER_CALL` actually
+answering a call) are reported in the response payload
+(`candidate_action`) but do not invoke a tool - claiming to execute them
+would be exactly the "fake functionality" this project's engineering
+principles rule out.
 
 ## Backend request flow
 

@@ -1,0 +1,46 @@
+"""Minimal response-generation layer (see docs "Reasoning / response
+generation").
+
+A LanguageModelProvider produces intent/action *structure*, not always a
+natural reply - `LocalWOWModelProvider` deliberately returns `content=""`
+("predicts structure, not free text"). This module is the seam that turns
+(model content, policy verdict, tool outcome) into the text WOW actually
+says, kept separate from orchestration so reply phrasing can change without
+touching orchestration logic.
+
+Phase 1 scope, stated plainly: English template fallbacks only. Real
+Hindi/Hinglish generation needs either a fine-tuned generator or a much
+larger phrase bank than would be honest to claim as finished here - see
+README "Current limitations". This module raises no error and never
+fabricates fluent Hindi/Hinglish it cannot actually produce.
+"""
+
+from app.agent.policy import PolicyVerdict
+
+_FALLBACK_TEMPLATES: dict[PolicyVerdict, str] = {
+    PolicyVerdict.CLARIFY: "Sorry, I didn't quite catch that - could you say it again?",
+    PolicyVerdict.REFUSE: "I'm not able to do that right now.",
+    PolicyVerdict.HANDOFF: "Let me make sure the right person gets back to you on that.",
+}
+
+_DEFAULT_FALLBACK = "I heard you, but I'm not sure how to respond to that yet."
+_TOOL_FAILURE_FALLBACK = "I tried to do that, but something went wrong on my end - could you try again?"
+
+
+def generate_response(
+    *, llm_content: str | None, verdict: PolicyVerdict, tool_failed: bool = False
+) -> str:
+    """Pick the text WOW actually says for this turn.
+
+    An ALLOW-verdict reply from the language model provider wins when it
+    said anything at all; otherwise fall back to a verdict-specific
+    template so the caller always hears something coherent, never raw
+    structure or a blank string.
+    """
+    if verdict == PolicyVerdict.ALLOW:
+        if tool_failed:
+            return _TOOL_FAILURE_FALLBACK
+        if llm_content:
+            return llm_content
+        return _DEFAULT_FALLBACK
+    return _FALLBACK_TEMPLATES.get(verdict, _DEFAULT_FALLBACK)

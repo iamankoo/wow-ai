@@ -51,7 +51,8 @@ Let a phone owner delegate "answer this call for me" to an assistant that:
 |---|---|
 | FastAPI backend, domain models, REST API (`/brain/command`, `/feedback/*`, `/contacts`, `/users`) | **Implemented** |
 | Rule-based reasoning provider (keyword intent classifier, zero ML deps) | **Implemented** |
-| WOW Brain v0 agent runtime (context -> reasoning -> state -> action) | **Implemented** |
+| WOW Brain v0 agent runtime (context -> reasoning -> state -> action) | **Implemented**, default |
+| WOW Agent orchestrator: explicit conversation state, confidence-gated policy engine, controlled tool registry (`backend/app/agent/`) | **Implemented**, opt-in (`AGENT_RUNTIME=wow_agent`; not yet the default) |
 | Self-trained classifier model (intent/context/action, 3 heads) - v0 through v3 | **Implemented** (v3 training in progress, see §8) |
 | Postgres + pgvector memory store, per-user personalization | **Implemented** |
 | Self-learning feedback pipeline (consent -> privacy filter -> human approval -> retrain -> evaluate -> promote) | **Implemented**, fully offline/batched |
@@ -94,7 +95,7 @@ Provider interfaces and their Phase 1 implementations:
 | `LanguageModelProvider` | `RuleBasedLanguageModelProvider` (default) / `LocalWOWModelProvider` (opt-in, self-trained model) | Fine-tuned model as the default |
 | `MemoryStore` | `PgVectorMemoryStore` (Postgres + pgvector) | Real embeddings once a local embedding model is wired in |
 | `ContextEngine` | `DefaultContextEngine` (contact + profile + memory lookup) | Conversation-history summarization |
-| `AgentRuntime` | `WowBrain` v0 | Multi-node, graph-based state machine |
+| `AgentRuntime` | `WowBrain` v0 (default) / `WowAgent` (opt-in, `AGENT_RUNTIME=wow_agent` - state + memory + policy + tools, see `docs/ARCHITECTURE.md`) | `WowAgent` promoted to default once proven; STT/VAD-driven turn detection |
 | `SpeechToTextProvider` / `TextToSpeechProvider` / `TelephonyProvider` | Contract only | Self-hosted ASR/TTS (e.g. faster-whisper, Piper/Coqui) + Android call-handling bridge |
 
 Full design: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
@@ -298,7 +299,7 @@ Two structurally separate systems, deliberately kept apart:
 ## 14. Testing
 
 ```
-backend/tests/    97 passed, 4 skipped (skipped tests require a live TEST_DATABASE_URL)
+backend/tests/    123 passed, 4 skipped (skipped tests require a live TEST_DATABASE_URL)
 training/tests/   249 passed
 ```
 

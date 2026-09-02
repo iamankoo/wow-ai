@@ -1,6 +1,9 @@
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
+from app.agent.orchestrator import WowAgent, build_default_tool_registry
+from app.agent.policy import PolicyEngine
+from app.agent.summary_repository import SqlSummaryRepository
 from app.brain.context_engine import DefaultContextEngine
 from app.brain.state_repository import SqlStateRepository
 from app.brain.wow_brain import WowBrain
@@ -44,13 +47,41 @@ _llm_provider = build_llm_provider()
 
 
 async def get_brain() -> AsyncGenerator[AgentRuntime, None]:
-    """FastAPI dependency: yields a request-scoped WowBrain wired to its own
-    DB session, committing on success."""
+    """FastAPI dependency: yields a request-scoped AgentRuntime wired to its
+    own DB session, committing on success.
+
+    Selects between `WowBrain` (default - v0's straight-line flow) and
+    `WowAgent` (opt-in via `AGENT_RUNTIME=wow_agent` - the fuller
+    state/memory/policy/tool orchestrator, see app/agent/orchestrator.py).
+    Both implement the same AgentRuntime contract, so no other layer
+    branches on which one is active.
+    """
+    settings = get_settings()
     async with AsyncSessionLocal() as session:
         memory_store = PgVectorMemoryStore(session)
         context_engine = DefaultContextEngine(session, memory_store)
         state_repo = SqlStateRepository(session)
-        yield WowBrain(_llm_provider, context_engine, state_repo)
+
+        if settings.agent_runtime == "wow_agent":
+            summary_repo = SqlSummaryRepository(session)
+            tool_registry = build_default_tool_registry(memory_store, summary_repo)
+            policy_engine = PolicyEngine(
+                min_sensitive_confidence=settings.policy_min_sensitive_confidence
+            )
+            yield WowAgent(
+                _llm_provider,
+                context_engine,
+                state_repo,
+                tool_registry,
+                policy_engine=policy_engine,
+            )
+        elif settings.agent_runtime == "wow_brain":
+            yield WowBrain(_llm_provider, context_engine, state_repo)
+        else:
+            raise ValueError(
+                f"Unknown AGENT_RUNTIME '{settings.agent_runtime}'. "
+                "Expected 'wow_brain' or 'wow_agent'."
+            )
         await session.commit()
 
 
