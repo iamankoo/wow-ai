@@ -45,7 +45,7 @@ wow-ai/
 | `conversations`        | A conversation session (tied to a call, or standalone).             |
 | `transcript_segments`  | Per-utterance STT output, tagged by speaker.                        |
 | `summaries`            | Short post-call summary + key points + action items.                |
-| `memories`             | Long-term facts, embedded via pgvector for semantic recall.         |
+| `memories`             | Facts, embedded via pgvector for semantic recall - typed (`memory_type`: episodic/semantic/contact/short_term), trust-tiered (`status`: observed/inferred/confirmed/user_approved), soft-deletable. |
 | `agent_states`         | Durable key/value working state for the brain, scoped per user/conversation. |
 
 No Alembic migrations yet - Phase 1 bootstraps the schema with
@@ -83,6 +83,30 @@ engine. The seams are exactly what a real multi-node LangGraph-style graph
 would plug into next: swap `WowBrain.handle_input` for a graph executor that
 calls the same `LanguageModelProvider` / `ContextEngine` / `StateRepository`
 at each node, without changing the `AgentRuntime` contract the API depends on.
+
+## Memory safety (backend/app/models/memory.py, app/interfaces/memory_store.py)
+
+A memory is not automatically a permanent fact. Every `Memory` row carries:
+
+- `memory_type` (`MemoryType`): `episodic` (what happened in a call),
+  `semantic` (a stable fact/preference), `contact` (about a specific
+  contact/relationship), or `short_term` (this call only).
+- `status` (`MemoryStatus`): `observed` (default - WOW heard it stated) ->
+  `inferred` (WOW derived it) -> `confirmed`/`user_approved` (an explicit
+  confirmation step happened). `MemoryStore.add` defaults every new memory
+  to `observed`; nothing promotes a row to `user_approved` except an
+  explicit `MemoryStore.approve` call (`POST /memories/{id}/approve`).
+- `confidence`: optional float, separate from `status` - "how sure" vs.
+  "how was this obtained".
+- `deleted_at`: soft-delete marker. `DELETE /memories/{id}`
+  (`MemoryStore.delete`) sets it rather than removing the row, so retrieval
+  (`MemoryStore.search`) excludes it by default while it stays available
+  for audit; `personalization.reset_personalization` still issues a real
+  hard `DELETE` for its "wipe everything" semantics.
+
+`MemoryStore.search` stays selective by design - always `top_k`-bounded,
+optionally narrowed to one `memory_type` - never a full dump of a user's
+memory into a prompt.
 
 ## WOW Agent orchestrator - opt-in (backend/app/agent/)
 

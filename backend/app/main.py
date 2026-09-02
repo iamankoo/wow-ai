@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.api.routes import brain, contacts, feedback, health, users
+from app.api.routes import brain, contacts, feedback, health, memories, users
 from app.db.base import Base
 from app.db.session import engine
 
@@ -28,3 +28,4 @@ app.include_router(users.router)
 app.include_router(contacts.router)
 app.include_router(brain.router)
 app.include_router(feedback.router)
+app.include_router(memories.router)

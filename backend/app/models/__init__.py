@@ -10,7 +10,7 @@ from app.models.feedback import (
     FeedbackStatus,
     ImplicitSignalType,
 )
-from app.models.memory import Memory
+from app.models.memory import Memory, MemoryStatus, MemoryType
 from app.models.summary import Summary
 from app.models.transcript import Speaker, TranscriptSegment
 from app.models.user import User
@@ -30,6 +30,8 @@ __all__ = [
     "FeedbackStatus",
     "ImplicitSignalType",
     "Memory",
+    "MemoryStatus",
+    "MemoryType",
     "Summary",
     "Speaker",
     "TranscriptSegment",
