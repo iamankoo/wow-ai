@@ -249,9 +249,28 @@ def train_head(
         stopper.best = ckpt["stopper_best"]
         stopper.best_epoch = ckpt["stopper_best_epoch"]
         stopper._bad_epochs = ckpt["stopper_bad_epochs"]
-        random.setstate(ckpt["rng_state_python"])
-        np.random.set_state(ckpt["rng_state_numpy"])
-        torch.set_rng_state(ckpt["rng_state_torch"])
+        # RNG state restoration is best-effort: it exists so a resumed run's
+        # batch order/shuffling continues bit-for-bit where the original run
+        # left off, but a checkpoint written on one torch/numpy version can
+        # fail to deserialize cleanly on another (e.g. torch.set_rng_state
+        # raising "RNG state must be a torch.ByteTensor" when resuming a
+        # CPU-trained checkpoint on a different torch build - the exact case
+        # of resuming v3's locally-trained intent checkpoint on Kaggle's
+        # GPU image). That must not lose the far more important restored
+        # state (model weights, optimizer state, epoch/history) - so each
+        # RNG restore is independently best-effort, not fatal.
+        for name, restore in (
+            ("python", lambda: random.setstate(ckpt["rng_state_python"])),
+            ("numpy", lambda: np.random.set_state(ckpt["rng_state_numpy"])),
+            ("torch", lambda: torch.set_rng_state(ckpt["rng_state_torch"])),
+        ):
+            try:
+                restore()
+            except Exception as e:  # noqa: BLE001 - see comment above
+                print(
+                    f"  [{head.name}] warning: could not restore {name} RNG state "
+                    f"({e}) - continuing with a fresh {name} RNG state."
+                )
         if best_checkpoint_path.exists():
             best_state = torch.load(best_checkpoint_path, map_location=device, weights_only=False)["model_state_dict"]
         print(
