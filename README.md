@@ -53,6 +53,7 @@ Let a phone owner delegate "answer this call for me" to an assistant that:
 | Rule-based reasoning provider (keyword intent classifier, zero ML deps) | **Implemented** |
 | WOW Brain v0 agent runtime (context -> reasoning -> state -> action) | **Implemented**, default |
 | WOW Agent orchestrator: explicit conversation state, confidence-gated policy engine, controlled tool registry (`backend/app/agent/`) | **Implemented**, opt-in (`AGENT_RUNTIME=wow_agent`; not yet the default) |
+| Structured, PII-safe per-stage latency observability (`backend/app/observability/`) - `WowAgent` only | **Implemented** |
 | Self-trained classifier model (intent/context/action, 3 heads) - v0 through v3 | **Implemented** (v3 training in progress, see §8) |
 | Postgres + pgvector memory store, per-user personalization | **Implemented** |
 | Memory safety: typed memories (episodic/semantic/contact/short-term), trust tiers (observed -> confirmed/user-approved), soft-delete (`/memories` API) | **Implemented** |
@@ -301,7 +302,7 @@ Two structurally separate systems, deliberately kept apart:
 ## 14. Testing
 
 ```
-backend/tests/    139 passed, 5 skipped (skipped tests require a live TEST_DATABASE_URL)
+backend/tests/    143 passed, 5 skipped (skipped tests require a live TEST_DATABASE_URL)
 training/tests/   249 passed
 ```
 

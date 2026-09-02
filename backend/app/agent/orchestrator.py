@@ -30,6 +30,8 @@ from app.interfaces.context_engine import ContextEngine
 from app.interfaces.llm import LanguageModelProvider, LLMMessage
 from app.interfaces.memory_store import MemoryStore
 from app.learning.confidence import ConfidencePolicy
+from app.observability.logging import log_agent_turn
+from app.observability.timing import StageTimings
 
 _STATE_KEY = "conversation_state"
 
@@ -86,26 +88,30 @@ class WowAgent(AgentRuntime):
         conversation_id: str | None = None,
         caller_number: str | None = None,
     ) -> AgentAction:
+        timings = StageTimings()
+
         state = await self._load_state(user_id, conversation_id)
         state.lifecycle = CallLifecycleStatus.LISTENING
         state.current_text = text
         state.record_turn("caller", text)
 
         state.lifecycle = CallLifecycleStatus.THINKING
-        context = await self._context_engine.build_context(
-            user_id=user_id, caller_number=caller_number, conversation_id=conversation_id
-        )
+        with timings.measure("context"):
+            context = await self._context_engine.build_context(
+                user_id=user_id, caller_number=caller_number, conversation_id=conversation_id
+            )
         state.contact = context.contact
         state.memory_results = [{"content": m} for m in context.recent_memories]
 
-        llm_response = await self._llm.generate(
-            [LLMMessage(role="user", content=text)],
-            context={
-                "contact": context.contact,
-                "context_profile": context.context_profile,
-                "recent_memories": context.recent_memories,
-            },
-        )
+        with timings.measure("brain"):
+            llm_response = await self._llm.generate(
+                [LLMMessage(role="user", content=text)],
+                context={
+                    "contact": context.contact,
+                    "context_profile": context.context_profile,
+                    "recent_memories": context.recent_memories,
+                },
+            )
 
         confidence: dict = (llm_response.metadata or {}).get("confidence", {})
         assessment = self._confidence_policy.assess(
@@ -126,16 +132,18 @@ class WowAgent(AgentRuntime):
         confidence_values = [v for v in confidence.values() if v is not None]
         overall_confidence = min(confidence_values) if confidence_values else None
 
-        decision = self._policy.evaluate(
-            action=candidate_action,
-            confidence_assessment=assessment,
-            overall_confidence=overall_confidence,
-            contact_known=state.contact is not None,
-        )
+        with timings.measure("policy"):
+            decision = self._policy.evaluate(
+                action=candidate_action,
+                confidence_assessment=assessment,
+                overall_confidence=overall_confidence,
+                contact_known=state.contact is not None,
+            )
         state.policy_decision = decision.verdict.value
 
         state.lifecycle = CallLifecycleStatus.RESPONDING
         tool_results: list[dict] = []
+        tool_names: list[str] = []
         tool_failed = False
         if decision.verdict == PolicyVerdict.ALLOW and candidate_action:
             tool_name = _ACTION_TOOL_MAP.get(candidate_action)
@@ -143,32 +151,48 @@ class WowAgent(AgentRuntime):
                 tool_results.append(
                     {"tool": tool_name, "success": False, "error": "no_conversation_id"}
                 )
+                tool_names.append(tool_name)
                 tool_failed = True
             elif tool_name:
-                result = await self._tools.invoke(
-                    tool_name,
-                    ToolContext(
-                        user_id=user_id,
-                        conversation_id=conversation_id,
-                        contact_id=state.contact["id"] if state.contact else None,
-                    ),
-                    _build_tool_arguments(tool_name, text, state),
-                )
+                with timings.measure("tool"):
+                    result = await self._tools.invoke(
+                        tool_name,
+                        ToolContext(
+                            user_id=user_id,
+                            conversation_id=conversation_id,
+                            contact_id=state.contact["id"] if state.contact else None,
+                        ),
+                        _build_tool_arguments(tool_name, text, state),
+                    )
                 tool_results.append(
                     {"tool": tool_name, "success": result.success, "error": result.error}
                 )
+                tool_names.append(tool_name)
                 tool_failed = not result.success
         state.tool_results = tool_results
 
-        reply = generate_response(
-            llm_content=llm_response.content, verdict=decision.verdict, tool_failed=tool_failed
-        )
+        with timings.measure("response"):
+            reply = generate_response(
+                llm_content=llm_response.content, verdict=decision.verdict, tool_failed=tool_failed
+            )
         state.response_text = reply
         state.record_turn("assistant", reply)
         state.turn_count += 1
         state.lifecycle = CallLifecycleStatus.LISTENING
 
         await self._save_state(user_id, conversation_id, state)
+
+        log_agent_turn(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            intent=llm_response.intent,
+            candidate_action=candidate_action,
+            policy_decision=decision.verdict.value,
+            policy_reason=decision.reason,
+            tool_names=tool_names,
+            tool_success=not tool_failed,
+            durations_ms=timings.durations_ms,
+        )
 
         return AgentAction(
             type=llm_response.intent or "unknown",
@@ -182,6 +206,7 @@ class WowAgent(AgentRuntime):
                 "policy_reason": decision.reason,
                 "tool_results": tool_results,
                 "lifecycle": state.lifecycle.value,
+                "durations_ms": timings.durations_ms,
             },
         )
 

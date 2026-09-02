@@ -189,6 +189,19 @@ audio - this is the closest thing Phase 1 has to demonstrating a realistic
 simulated personal call (see README "Current limitations": it is
 explicitly not real telephony, and is never described as such).
 
+## Observability (backend/app/observability/)
+
+`WowAgent` measures four stages per turn - `context` (ContextEngine),
+`brain` (LanguageModelProvider), `policy` (PolicyEngine), and, when a tool
+runs, `tool` and `response` - via `StageTimings` (`timing.py`) and emits
+one structured log record per turn via `log_agent_turn` (`logging.py`).
+`log_agent_turn`'s signature has no `text`/`reply`/transcript parameter at
+all - not "redacted before logging", but structurally incapable of
+receiving conversation content - so per docs "Privacy", ordinary
+application logs never carry turn text, only IDs, enums, and durations.
+The same `durations_ms` are also returned in `AgentAction.payload` for API
+consumers. `WowBrain` v0 does not yet emit these (see "Roadmap").
+
 ## Backend request flow
 
 `POST /brain/command` (see `app/api/routes/brain.py`) is the single entry

@@ -36,6 +36,7 @@ async def test_allowed_general_conversation_returns_llm_reply():
     assert action.payload["reply"] == "Hello! How can I help?"
     assert action.payload["policy_decision"] == "allow"
     assert action.payload["turn_count"] == 1
+    assert set(action.payload["durations_ms"]) >= {"context", "brain", "policy", "response"}
 
 
 async def test_low_confidence_action_is_clarified_not_executed():
