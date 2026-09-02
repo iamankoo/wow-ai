@@ -136,6 +136,19 @@ state loaded  -> record caller turn (ConversationState, app/agent/state.py)
              -> state persisted back (ConversationState.to_dict() via StateRepository)
 ```
 
+`WowAgent` also closes a real gap between the existing active-learning
+review queue (`docs/SELF_LEARNING.md`, `FeedbackStatus.NEEDS_REVIEW`) and
+live predictions: previously nothing in the running system ever populated
+that queue - it was only exercised by `test_active_learning.py`'s manual
+`FeedbackSubmission`s. `WowAgent` now takes an optional
+`feedback_repository`; whenever `ConfidencePolicy.assess` reports
+`needs_review=True` for a turn, it logs a `NEEDS_REVIEW` `FeedbackSubmission`
+with the predicted intent/context/action and per-head confidence (so it
+surfaces in `GET /feedback/review-queue` for a human to resolve via
+`POST /feedback/{id}/respond`). This is best-effort and never on the
+critical path: a repository failure is swallowed, not raised - a missed
+review-queue entry is far cheaper than a failed call.
+
 `ConversationState` (`app/agent/state.py`) is the explicit, serializable
 session object every step reads and writes - session/user id, lifecycle
 status (`CallLifecycleStatus`: created/ringing/connected/listening/

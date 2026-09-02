@@ -24,9 +24,10 @@ from app.agent.state import CallLifecycleStatus, ConversationState
 from app.agent.summary_repository import SummaryRepository
 from app.agent.tools import ToolContext, ToolRegistry
 from app.brain.state_repository import StateRepository
-from app.brain.taxonomy import Action, is_valid_action
+from app.brain.taxonomy import Action, is_valid_action, is_valid_context
 from app.interfaces.agent_runtime import AgentAction, AgentRuntime
 from app.interfaces.context_engine import ContextEngine
+from app.interfaces.feedback import FeedbackRepository, FeedbackStatus, FeedbackSubmission
 from app.interfaces.llm import LanguageModelProvider, LLMMessage
 from app.interfaces.memory_store import MemoryStore
 from app.learning.confidence import ConfidencePolicy
@@ -72,6 +73,7 @@ class WowAgent(AgentRuntime):
         *,
         confidence_policy: ConfidencePolicy | None = None,
         policy_engine: PolicyEngine | None = None,
+        feedback_repository: FeedbackRepository | None = None,
     ):
         self._llm = llm_provider
         self._context_engine = context_engine
@@ -79,6 +81,11 @@ class WowAgent(AgentRuntime):
         self._tools = tool_registry
         self._confidence_policy = confidence_policy or ConfidencePolicy()
         self._policy = policy_engine or PolicyEngine()
+        # Optional: when given, a low-confidence prediction is logged to the
+        # active-learning review queue (docs/SELF_LEARNING.md) - never
+        # required, and a failure here must never fail the turn (see
+        # _log_for_review below).
+        self._feedback_repo = feedback_repository
 
     async def handle_input(
         self,
@@ -125,9 +132,26 @@ class WowAgent(AgentRuntime):
             # Never trust a prediction outside the known taxonomy, no
             # matter how confident the model claims to be.
             candidate_action = None
+        context_mode = _first_slot(llm_response.slots, "context_mode", "wow_context_mode")
+        if context_mode is not None and not is_valid_context(context_mode):
+            context_mode = None
         state.candidate_action = candidate_action
+        state.context_mode = context_mode
         state.intent = llm_response.intent
         state.confidence = confidence
+
+        if assessment.needs_review:
+            await self._log_for_review(
+                user_id=user_id,
+                conversation_id=conversation_id,
+                text=text,
+                intent=llm_response.intent,
+                context_mode=context_mode,
+                candidate_action=candidate_action,
+                confidence=confidence,
+                model_version=(llm_response.metadata or {}).get("model_version")
+                or (llm_response.metadata or {}).get("provider"),
+            )
 
         confidence_values = [v for v in confidence.values() if v is not None]
         overall_confidence = min(confidence_values) if confidence_values else None
@@ -227,6 +251,43 @@ class WowAgent(AgentRuntime):
             value=state.to_dict(),
             conversation_id=conversation_id,
         )
+
+    async def _log_for_review(
+        self,
+        *,
+        user_id: str,
+        conversation_id: str | None,
+        text: str,
+        intent: str | None,
+        context_mode: str | None,
+        candidate_action: str | None,
+        confidence: dict,
+        model_version: str | None,
+    ) -> None:
+        """Logs a low-confidence prediction to the active-learning review
+        queue (docs/SELF_LEARNING.md). Never part of the turn's critical
+        path: a repository failure here is swallowed, not raised - a
+        missed review-queue entry is far cheaper than a failed call."""
+        if self._feedback_repo is None:
+            return
+        try:
+            await self._feedback_repo.create(
+                FeedbackSubmission(
+                    user_id=user_id,
+                    text=text,
+                    conversation_id=conversation_id,
+                    predicted_intent=intent,
+                    predicted_context_mode=context_mode,
+                    predicted_action=candidate_action,
+                    intent_confidence=confidence.get("intent"),
+                    context_confidence=confidence.get("context_mode"),
+                    action_confidence=confidence.get("action"),
+                    model_version=model_version,
+                    status=FeedbackStatus.NEEDS_REVIEW,
+                )
+            )
+        except Exception:  # noqa: BLE001 - logging a review item must never fail the call
+            pass
 
 
 def _build_tool_arguments(tool_name: str, text: str, state: ConversationState) -> dict:

@@ -11,6 +11,7 @@ from app.config import get_settings
 from app.db.session import AsyncSessionLocal, get_db
 from app.interfaces.agent_runtime import AgentRuntime
 from app.interfaces.llm import LanguageModelProvider
+from app.learning.feedback_repository import SqlFeedbackRepository
 from app.providers.llm.rule_based import RuleBasedLanguageModelProvider
 from app.providers.memory.pgvector_store import PgVectorMemoryStore
 
@@ -74,6 +75,7 @@ async def get_brain() -> AsyncGenerator[AgentRuntime, None]:
                 state_repo,
                 tool_registry,
                 policy_engine=policy_engine,
+                feedback_repository=SqlFeedbackRepository(session),
             )
         elif settings.agent_runtime == "wow_brain":
             yield WowBrain(_llm_provider, context_engine, state_repo)
