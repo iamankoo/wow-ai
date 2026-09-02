@@ -63,6 +63,7 @@ Let a phone owner delegate "answer this call for me" to an assistant that:
 | Real telephony integration (`CallScreeningService`/`InCallService`) | **Planned** (only a deterministic local simulator, `SimulatedTelephonyProvider`, exists today) |
 | Self-hosted speech-to-text / text-to-speech | **Planned** (only deterministic local simulators, `SimulatedSTTProvider`/`SimulatedTTSProvider`, exist today) |
 | End-to-end simulated-call harness (`app/simulation/call_simulator.py`): scripted STT -> WowAgent -> TTS -> telephony, real orchestration around simulated audio | **Implemented** |
+| Call history persistence (`CallRecorder`: Call/Conversation/TranscriptSegment/Summary rows), wired into the simulated-call harness | **Implemented** |
 | `LocalWOWModelProvider` as the default production reasoning provider | **Planned** (works today, opt-in via `MODEL_PROVIDER=local_wow`; `rule_based` is still the default) |
 | Live canary traffic routing between model versions | **Planned** (registry supports the status; routing logic does not exist yet) |
 | Fully automated dataset-build/retrain/promote pipeline | **Planned** (every step is real and tested; chaining them together end-to-end is currently a human-run sequence, by design - see §9) |
@@ -302,7 +303,7 @@ Two structurally separate systems, deliberately kept apart:
 ## 14. Testing
 
 ```
-backend/tests/    143 passed, 5 skipped (skipped tests require a live TEST_DATABASE_URL)
+backend/tests/    143 passed, 7 skipped (skipped tests require a live TEST_DATABASE_URL)
 training/tests/   249 passed
 ```
 

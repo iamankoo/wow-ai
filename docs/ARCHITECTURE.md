@@ -202,6 +202,20 @@ application logs never carry turn text, only IDs, enums, and durations.
 The same `durations_ms` are also returned in `AgentAction.payload` for API
 consumers. `WowBrain` v0 does not yet emit these (see "Roadmap").
 
+## Call recording (backend/app/agent/call_recorder.py)
+
+`ConversationState` (above) is the agent's in-process working state, not
+call history - it is not queryable as "show me last week's calls".
+`CallRecorder` is the bridge: given a DB session, `start_call` creates the
+`Call` + `Conversation` rows, `record_turn` appends a `TranscriptSegment`
+per utterance, and `end_call` marks both `COMPLETED` and writes a
+`Summary`. It is optional and orchestration-agnostic - `WowAgent`/`WowBrain`
+never depend on it directly. `run_simulated_call` (see below) accepts an
+optional `recorder`: when given, it mints the real `call_id`/
+`conversation_id` from the database instead of a random one, so a
+simulated call produces genuine, queryable call history end to end - the
+same code path a real telephony integration would drive.
+
 ## Backend request flow
 
 `POST /brain/command` (see `app/api/routes/brain.py`) is the single entry
