@@ -213,9 +213,32 @@ Hinglish). Hard negatives: 3,000. Pre-existing (v2-era) examples: 33,000.
 | Model + optimizer state present | Yes (resume-capable) |
 | Trained on | CPU (this development machine has no CUDA GPU) |
 
-This checkpoint is the **resume point**, not a finished model - training
-continues (`--resume`, not a fresh run) on a cloud GPU. Full cloud-training
-procedure: [`docs/KAGGLE_TRAINING.md`](docs/KAGGLE_TRAINING.md).
+This checkpoint (14/20 epochs, intent only) is what's **actually present
+in this repository and locally loadable today** - `MODEL_PROVIDER=rule_based`
+is the default for exactly this reason.
+
+**Reported Kaggle run, artifacts unrecoverable.** Separately, the project
+owner reports that all three v3 heads were subsequently trained/resumed
+on Kaggle (2x Tesla T4) and reached held-out test accuracy of 93.66%
+(Intent) / 89.62% (Context) / 95.49% (Action), 100% structured-output
+validity, and 96.00% ambiguous/unknown accuracy on the 6,785-example test
+split - and that a `wow-brain-v3-final.tar` (~7.1GB) containing all three
+heads plus evaluation reports was built and verified before that Kaggle
+session ended. A live-session recovery attempt confirmed those artifacts
+are **not recoverable**: the session had persistence disabled, no
+notebook version was ever saved, and no backup dataset/model was
+published - `/kaggle/working` now contains only `.virtual_documents`. See
+[`docs/implementation-status.md`](docs/implementation-status.md) §4 for
+the full recovery attempt log, and the callout at the top of
+[`docs/KAGGLE_TRAINING.md`](docs/KAGGLE_TRAINING.md) for what to do
+differently next time. These reported numbers describe what the training
+run is said to have achieved, not something this repository can currently
+load, run, or independently re-verify - treat them as history to inform a
+future restoration, not as the state of the live model.
+
+Full cloud-training procedure (for a future restoration attempt, resuming
+from the still-present 14-epoch intent checkpoint):
+[`docs/KAGGLE_TRAINING.md`](docs/KAGGLE_TRAINING.md).
 
 ## 9. Self-learning / continuous-learning architecture
 

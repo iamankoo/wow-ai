@@ -6,6 +6,30 @@ Tesla T4). It is preparation and reference material only - it does not
 start any training run, and none of the commands below have been executed
 against Kaggle by anyone but you.
 
+> **Known failure mode - read before your next run.** A prior training
+> pass on this notebook (`iamankoo/notebook914fc30194`) reportedly
+> completed all three v3 heads and built a `wow-brain-v3-final.tar`
+> (~7.1GB), but the artifacts were **permanently lost**: the notebook's
+> session had `Persistence: No persistence` (Kaggle wipes `/kaggle/working`
+> on every session reset unless persistence is enabled or a version is
+> explicitly saved), and no "Save & Run All" / notebook version was ever
+> committed, and no output Dataset or Model was published as a backup. A
+> live-session recovery attempt (`kaggle.com/work/code` -> the notebook's
+> editor -> its Python console, `find /kaggle/working`) confirmed the
+> working directory now contains only `.virtual_documents` - see
+> `docs/implementation-status.md` §4 for the full recovery attempt log.
+>
+> **Do not repeat this.** Before ending any future Kaggle session that
+> produced trained artifacts, do at least one of:
+> - Set session persistence to **"Files only"** (or higher) in Session
+>   options, *before* training starts, so `/kaggle/working` survives a
+>   session reset, or
+> - Run **"Save Version"** (commit the notebook) so its Output becomes a
+>   downloadable Notebook Output, or
+> - Run the `kaggle datasets version -p training/models/wow-brain/v3 ...`
+>   command from step 12B below **during** the run (not only "at the end"),
+>   so progress survives even if the step above is forgotten.
+
 **Read this first:**
 
 - v3's intent head already has **14 completed epochs** of real training

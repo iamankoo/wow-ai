@@ -70,20 +70,82 @@ Stated plainly, matching README §18:
   (MESSAGE_FOR_USER vs SCHEDULE_REQUEST, etc.) are documented but no v4
   candidate data collection has begun.
 
-## 4. Model artifact status (verified against the actual local repo, not assumed)
+## 4. Model artifact status - v3 artifact recovery attempt (verified against the actual local repo and the actual Kaggle account, not assumed)
 
-- `training/models/wow-brain/v3/` contains **only an `intent/` head**,
-  checkpointed at **14 of 20 configured epochs** (best val accuracy 94.54%
-  at epoch 10). There is no `context/` or `action/` head for v3, and no
-  `metadata.json`, so `LocalWOWModelProvider` cannot currently load v3 -
-  `MODEL_PROVIDER=rule_based` remains the default for exactly this reason.
-- `docs/KAGGLE_TRAINING.md` documents a prepared-but-not-yet-executed
-  cloud GPU resume; the dataset + checkpoint were staged for Kaggle upload
-  (`kaggle-upload/`, now correctly gitignored) but no training run against
-  Kaggle has completed and been pulled back into this repo.
-- No retraining was performed as part of this round of work, per
-  instruction - only the existing artifacts were inspected and the gap
-  documented.
+**Local repo, as of this round:** `training/models/wow-brain/v3/` contains
+**only an `intent/` head**, checkpointed at **14 of 20 configured epochs**
+(best val accuracy 94.54% at epoch 10). There is no `context/` or
+`action/` head for v3, and no `metadata.json`, so `LocalWOWModelProvider`
+cannot currently load v3 - `MODEL_PROVIDER=rule_based` remains the default
+for exactly this reason.
+
+**Reported training history:** the project owner reports that WOW Brain
+v3's Intent head was resumed and Context/Action were trained from scratch
+on Kaggle (2x Tesla T4), reaching held-out test accuracy of 93.66%
+(Intent) / 89.62% (Context) / 95.49% (Action) on the 66,000-example
+`v3.3.0-answer-call` test set, and that a `wow-brain-v3-final.tar`
+(~7.1GB, all three heads + evaluation reports) was created and verified
+before the Kaggle session ended.
+
+**Recovery attempt performed this round (via the Kaggle web UI, logged
+in as `iamankoo`):**
+
+1. `kaggle.com/work/code` -> exactly one notebook exists:
+   `iamankoo/notebook914fc30194`. Opened it.
+2. The notebook's read-only view reports **"No saved version"** - the
+   author never ran "Save & Run All"/committed a version, so there is no
+   persisted Output tab to pull artifacts from via `kaggle kernels output`.
+3. Reconnected to the notebook's **live editor session** (a fresh, ~10-
+   minute-old "Draft Session", GPU T4x2 selected as accelerator, input
+   datasets `wow-ai-v3-3-0-answer-call` and `wow-ai-v3-intent-checkpoint`
+   correctly attached - confirming this is the right notebook). Session
+   options show **`Persistence: No persistence`** - on Kaggle this means
+   `/kaggle/working` is wiped every time the interactive session resets;
+   nothing survives across sessions unless a version is saved or files are
+   explicitly exported.
+4. Ran a live command in the session's Python console:
+   `find /kaggle/working -maxdepth 6`. Output:
+   ```
+   /kaggle/working
+   /kaggle/working/.virtual_documents
+   /kaggle/working/.virtual_documents/__notebook_source__.ipynb
+   ```
+   No `training/` directory, no model files - matching the project
+   owner's own report of what the current session shows. The Output panel
+   independently corroborates this: **112KiB** total (not the multi-GB the
+   trained artifacts would occupy).
+5. Checked `kaggle.com/work/datasets` for a backup: only the same **two
+   input** datasets exist (`wow-ai-v3-intent-checkpoint`, 833MB - the
+   pre-training 14-epoch checkpoint; `wow-ai-v3-3-0-answer-call`, 4MB - the
+   dataset manifests) - no output dataset was ever published from the
+   completed run.
+6. Checked `kaggle.com/work/models` (Kaggle's separate Models feature):
+   **no models published.**
+
+**Conclusion: the trained v3 artifacts (Context/Action heads, the
+finished Intent head, and the `wow-brain-v3-final.tar` archive) are not
+recoverable from any avenue available in this environment.** They existed
+only on the ephemeral disk of an interactive Kaggle session with
+persistence disabled, and were never checkpointed to a durable Kaggle
+artifact (a saved notebook version, an output dataset, or a published
+model) before that session was reset. This is not a "couldn't find it"
+result - it is a definitive "the only remaining record of that session is
+this empty working directory," confirmed directly against the live
+Kaggle session, not inferred.
+
+**Per instruction, no retraining was performed.** The training *history*
+(hyperparameters, that it ran, the reported metrics) is treated as real
+and should inform a future v3 restoration, but the *artifacts* themselves
+must be produced again - there is nothing left to recover. If v3 is
+restored in the future, the most direct path is resuming
+`training/models/wow-brain/v3/intent/checkpoint.pt` (14 completed epochs,
+still present locally) exactly as `docs/KAGGLE_TRAINING.md` describes,
+this time **saving a Kaggle Dataset version of `training/models/wow-brain/v3/`
+before the session ends** (`docs/KAGGLE_TRAINING.md` step 12B already
+documents the command; it was not actually run for this training pass).
+
+`docs/KAGGLE_TRAINING.md` has been updated with an explicit warning about
+this exact failure mode for future runs.
 
 ## 5. Test results (this round, backend)
 
