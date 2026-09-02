@@ -55,3 +55,7 @@ training/evaluation/latest_report.json
 # reusable seed.jsonl files under training/datasets/<category>/ are NOT covered
 # by this rule and remain tracked)
 training/datasets/*_dataset_*.txt
+
+# WOW AI Kaggle upload staging (packaged dataset + multi-GB checkpoint bound
+# for Kaggle Dataset upload, see docs/KAGGLE_TRAINING.md - never git)
+kaggle-upload/
