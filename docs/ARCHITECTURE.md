@@ -56,10 +56,10 @@ needs versioned, production-safe migrations.
 
 | Interface              | Phase 1 concrete implementation                          | Phase 2 direction |
 |-------------------------|-----------------------------------------------------------|--------------------|
-| `SpeechToTextProvider`  | *(contract only)*                                          | Self-hosted streaming ASR (e.g. faster-whisper) |
-| `TextToSpeechProvider`  | *(contract only)*                                          | Self-hosted TTS (e.g. Piper/Coqui) |
+| `SpeechToTextProvider`  | `SimulatedSTTProvider` (deterministic local stand-in, see below) - no real ASR | Self-hosted streaming ASR (e.g. faster-whisper) |
+| `TextToSpeechProvider`  | `SimulatedTTSProvider` (deterministic local stand-in, see below) - no real synthesis | Self-hosted TTS (e.g. Piper/Coqui) |
 | `LanguageModelProvider` | `RuleBasedLanguageModelProvider` (keyword intent classifier) | Self-hosted/fine-tuned LLM |
-| `TelephonyProvider`     | *(contract only)*                                          | Android `CallScreeningService`/`InCallService` bridge |
+| `TelephonyProvider`     | `SimulatedTelephonyProvider` (deterministic local stand-in, see below) - no real carrier/VoIP | Android `CallScreeningService`/`InCallService` bridge |
 | `MemoryStore`           | `PgVectorMemoryStore` (Postgres + pgvector)                 | Same store, real embeddings once a local embedding model is wired in |
 | `ContextEngine`         | `DefaultContextEngine` (contact + profile + memory lookup)  | Add conversation history summarization |
 | `AgentRuntime`          | `WowBrain` (v0, default) / `WowAgent` (opt-in, `AGENT_RUNTIME=wow_agent`) | `WowAgent` promoted to default once proven on real traffic |
@@ -155,6 +155,39 @@ answering a call) are reported in the response payload
 (`candidate_action`) but do not invoke a tool - claiming to execute them
 would be exactly the "fake functionality" this project's engineering
 principles rule out.
+
+## Local simulators + simulated-call harness (backend/app/providers/{stt,tts,telephony}/simulated.py, app/simulation/)
+
+No real audio hardware, ASR/TTS engine, or telephony infrastructure is
+available in this development environment. Rather than leaving
+`SpeechToTextProvider`/`TextToSpeechProvider`/`TelephonyProvider`
+contract-only indefinitely, or - worse - faking a "real" implementation
+that secretly does nothing, Phase 1 ships **deterministic local
+simulators** that satisfy the exact same interfaces:
+
+- `SimulatedSTTProvider`: treats an "audio chunk" as UTF-8 text bytes
+  standing in for what a real engine would have already transcribed.
+  `feed()` returns a partial result per chunk; a chunk ending in
+  `.`/`?`/`!` (or `close()`) produces the final result - a simple,
+  inspectable stand-in for real turn-final detection.
+- `SimulatedTTSProvider`: "synthesizes" the UTF-8 bytes of the text itself
+  (`stream_synthesize` yields it word-by-word).
+- `SimulatedTelephonyProvider`: an in-memory call log (answered/ended,
+  inbound/outbound audio) plus `inject_caller_audio` (simulation-only, not
+  part of `TelephonyProvider` - stands in for "the carrier delivered this
+  inbound chunk").
+
+`app/simulation/call_simulator.run_simulated_call` drives a scripted
+caller conversation through the **real** stack above these three seams:
+`SpeechToTextProvider -> AgentRuntime (WowBrain/WowAgent) ->
+TextToSpeechProvider -> TelephonyProvider`. Everything except the audio
+source/sink is the production code path. `backend/tests/test_call_simulation.py`
+exercises this with `WowAgent` + `RuleBasedLanguageModelProvider` end to
+end: answer -> multi-turn conversation -> end, verifying transcripts,
+replies, and that every reply actually reaches "telephony" as outbound
+audio - this is the closest thing Phase 1 has to demonstrating a realistic
+simulated personal call (see README "Current limitations": it is
+explicitly not real telephony, and is never described as such).
 
 ## Backend request flow
 
