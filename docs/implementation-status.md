@@ -39,6 +39,7 @@ view.
 | Call history persistence | `CallRecorder`: Call/Conversation/TranscriptSegment/Summary rows from a (simulated or, later, real) call | `backend/app/agent/call_recorder.py` |
 | Observability | Per-stage latency (`context`/`brain`/`policy`/`tool`/`response`) + one structured log record per turn, whose signature has no text/transcript parameter at all | `backend/app/observability/` |
 | Active learning wiring | Low-confidence `WowAgent` predictions now actually reach the pre-existing (previously untriggered) `NEEDS_REVIEW` queue | `backend/app/agent/orchestrator.py` (`_log_for_review`) |
+| Call retention | `CallRetentionPolicy` (default 15 days) + `cleanup_expired_calls` - deletes a COMPLETED call's full history (Conversation/TranscriptSegment/Summary/AgentState) past the retention window; externally scheduled, no in-app scheduler | `backend/app/learning/call_retention.py`, `run_call_retention_cleanup.py` |
 | Git hygiene | `kaggle-upload/` (a 1.6GB checkpoint + dataset staged for Kaggle upload) was untracked but not gitignored - fixed before it could be accidentally committed | `.gitignore` |
 
 ## 3. What remains external / not implemented
@@ -60,10 +61,6 @@ Stated plainly, matching README §18:
   effect (a `ContextProfile` write endpoint, real telephony) that doesn't
   exist yet - reporting without executing was the honest choice over
   faking it.
-- **No call/transcript retention/cleanup job yet** (§22/§36 of the original
-  task brief) - `Call`/`Conversation`/`TranscriptSegment` rows accumulate
-  with no scheduled expiry. `RetentionPolicy` exists but only governs
-  feedback-event eligibility for training, not call data.
 - **No real VAD/barge-in/interruption handling.** The simulated turn
   detection (sentence-ending punctuation) is a stand-in, not a timing
   model.
@@ -91,7 +88,7 @@ Stated plainly, matching README §18:
 ## 5. Test results (this round, backend)
 
 ```
-backend/tests/    147 passed, 7 skipped (skipped tests require a live TEST_DATABASE_URL -
+backend/tests/    151 passed, 8 skipped (skipped tests require a live TEST_DATABASE_URL -
                    no Postgres/Docker was available in this environment; the DB-dependent
                    tests were reviewed against the same working query patterns already
                    proven by the pre-existing DB-integration tests in the same file, but
@@ -130,9 +127,8 @@ own trained model, and has no automated retention/cleanup for call data.
 In order of leverage: (1) decide whether to resume v3 training on a real
 GPU (the artifacts and procedure are ready, see `docs/KAGGLE_TRAINING.md`)
 or continue building agent capability against `rule_based`/`local_wow` v0/v1;
-(2) build the call/transcript retention + scheduled cleanup job (§22/§36);
-(3) add tools + policy coverage for `SET_CONTEXT` (would need a
+(2) add tools + policy coverage for `SET_CONTEXT` (would need a
 `ContextProfile` write path) so more of the taxonomy is actually
-executable, not just reported; (4) begin real STT integration (e.g.
+executable, not just reported; (3) begin real STT integration (e.g.
 faster-whisper) behind the existing `SpeechToTextProvider` interface,
 since that is the actual blocker to a real (not simulated) call.

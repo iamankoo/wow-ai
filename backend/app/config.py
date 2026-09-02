@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     # rather than routed to CLARIFY. Only used by AGENT_RUNTIME=wow_agent.
     policy_min_sensitive_confidence: float = 0.75
 
+    # How long a COMPLETED call's history (Call/Conversation/
+    # TranscriptSegment/Summary/AgentState) stays in the database before
+    # scheduled cleanup removes it (app.learning.call_retention). Default
+    # matches the ~15 day retention originally designed for call data.
+    call_retention_days: int = 15
+
 
 @lru_cache
 def get_settings() -> Settings:

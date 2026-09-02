@@ -229,6 +229,22 @@ optional `recorder`: when given, it mints the real `call_id`/
 simulated call produces genuine, queryable call history end to end - the
 same code path a real telephony integration would drive.
 
+## Call retention (backend/app/learning/call_retention.py)
+
+`CallRetentionPolicy` (default `CALL_RETENTION_DAYS=15`) and
+`cleanup_expired_calls` delete a COMPLETED call's full history - its
+`Conversation`(s), `TranscriptSegment`s, `Summary`, and working
+`AgentState` - once `ended_at` is older than the retention window.
+ACTIVE/RINGING/MISSED/VOICEMAIL calls are never touched regardless of age.
+There is no `ON DELETE CASCADE` at the DB level (Phase 1 has no Alembic
+migrations - see README "Current limitations"), so child rows are deleted
+explicitly, in dependency order, before their parent `Call`. No scheduler
+is wired into the app itself (no Celery/APScheduler dependency was
+introduced, per docs "Do not overengineer prematurely") - run
+`python -m app.learning.run_call_retention_cleanup` via an external
+cron/task scheduler, the same human/externally-triggered pattern
+`docs/KAGGLE_TRAINING.md`'s training commands already use.
+
 ## Backend request flow
 
 `POST /brain/command` (see `app/api/routes/brain.py`) is the single entry

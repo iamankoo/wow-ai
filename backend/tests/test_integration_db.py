@@ -12,17 +12,20 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
+from datetime import datetime, timedelta, timezone
+
 from app.agent.call_recorder import CallRecorder
 from app.agent.orchestrator import WowAgent, build_default_tool_registry
 from app.agent.summary_repository import SqlSummaryRepository
 from app.db.base import Base
 from app.interfaces.memory_store import MemoryStatus, MemoryType
-from app.models.call import Call, CallStatus
+from app.learning.call_retention import CallRetentionPolicy, cleanup_expired_calls
+from app.models.call import Call, CallDirection, CallStatus
 from app.models.contact import Contact
 from app.models.context import ContextProfile
 from app.models.conversation import Conversation, ConversationStatus
 from app.models.summary import Summary
-from app.models.transcript import TranscriptSegment
+from app.models.transcript import Speaker, TranscriptSegment
 from app.models.user import User
 from app.brain.context_engine import DefaultContextEngine
 from app.brain.state_repository import SqlStateRepository
@@ -227,3 +230,62 @@ async def test_run_simulated_call_rejects_explicit_ids_when_recorder_given(sessi
             recorder=recorder,
             conversation_id="not-allowed",
         )
+
+
+async def test_cleanup_expired_calls_only_removes_old_completed_calls(session):
+    user = User(display_name="Aniket", phone_number="+10000000004")
+    session.add(user)
+    await session.flush()
+
+    now = datetime.now(timezone.utc)
+    old_completed = Call(
+        user_id=user.id,
+        caller_number="+1111111111",
+        direction=CallDirection.INBOUND,
+        status=CallStatus.COMPLETED,
+        started_at=now - timedelta(days=20, minutes=5),
+        ended_at=now - timedelta(days=20),
+    )
+    recent_completed = Call(
+        user_id=user.id,
+        caller_number="+2222222222",
+        direction=CallDirection.INBOUND,
+        status=CallStatus.COMPLETED,
+        started_at=now - timedelta(days=5, minutes=5),
+        ended_at=now - timedelta(days=5),
+    )
+    old_active = Call(
+        user_id=user.id,
+        caller_number="+3333333333",
+        direction=CallDirection.INBOUND,
+        status=CallStatus.ACTIVE,
+        started_at=now - timedelta(days=20),
+        ended_at=None,
+    )
+    session.add_all([old_completed, recent_completed, old_active])
+    await session.flush()
+
+    old_conversation = Conversation(
+        user_id=user.id, call_id=old_completed.id, status=ConversationStatus.COMPLETED
+    )
+    session.add(old_conversation)
+    await session.flush()
+    session.add(TranscriptSegment(conversation_id=old_conversation.id, speaker=Speaker.CALLER, text="hi"))
+    session.add(Summary(conversation_id=old_conversation.id, summary_text="old call summary"))
+    await session.commit()
+
+    deleted = await cleanup_expired_calls(session, CallRetentionPolicy(max_age_days=15), now=now)
+    await session.commit()
+
+    assert deleted == 1
+    assert await session.get(Call, old_completed.id) is None
+    assert await session.get(Conversation, old_conversation.id) is None
+    assert await session.get(Call, recent_completed.id) is not None
+    assert await session.get(Call, old_active.id) is not None  # never deleted regardless of age
+
+    remaining_segments = (
+        await session.execute(
+            select(TranscriptSegment).where(TranscriptSegment.conversation_id == old_conversation.id)
+        )
+    ).scalars().all()
+    assert remaining_segments == []
