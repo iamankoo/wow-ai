@@ -1,15 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
+import '../../core/constants.dart';
 import '../../core/wow_theme.dart';
-
-/// Backend user_id columns are UUID (no real account system exists yet -
-/// Phase 1) - this fixed UUID is the Phase 1/2 stand-in for "the current
-/// device's user" until real accounts exist. Shared with
-/// mobile/android/.../WowCallScreeningService.kt's DEMO_USER_ID so the
-/// Flutter UI and the native call-screening path resolve to the same
-/// backend user.
-const String kDemoUserId = '00000000-0000-0000-0000-000000000001';
 
 class _Duration4Option {
   const _Duration4Option(this.label, this.icon, this.spokenPhrase);

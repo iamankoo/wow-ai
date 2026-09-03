@@ -10,6 +10,14 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.ANSWER_PHONE_CALLS" />
+    <!-- Phase 6 Part D: contacts permission, requested explicitly during
+         onboarding (see MainActivity's PERMISSIONS_CHANNEL) - not used yet
+         beyond being granted; wiring caller-name lookup against it is
+         future work, not invented here. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- Phase 6 Part J: real microphone capture for voice command / the
+         initial personalization call - real STT input, not a stub. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <application
         android:label="WOW AI"
