@@ -1,7 +1,7 @@
 name: wow_ai
 description: WOW AI - self-hosted personal AI voice/call assistant (Android client).
 publish_to: "none"
-version: 0.1.0+1
+version: 1.0.0+1
 
 environment:
   sdk: ">=3.3.0 <4.0.0"

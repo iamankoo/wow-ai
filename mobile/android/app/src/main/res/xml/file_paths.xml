@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Phase 6 Part T: exposes only getExternalFilesDir()/updates (where the
+     Dart update checker writes downloaded release APKs) via FileProvider -
+     nothing else in app storage is shared. -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-files-path name="updates" path="updates/" />
+</paths>

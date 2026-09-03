@@ -10,16 +10,21 @@ import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+import androidx.core.content.pm.PackageInfoCompat
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.File
 
 private const val TAG = "WowMainActivity"
 private const val CALL_SCREENING_ROLE_REQUEST_CODE = 4001
 private const val PHONE_PERMISSIONS_REQUEST_CODE = 4002
 private const val OVERLAY_PERMISSION_REQUEST_CODE = 4003
+private const val INSTALL_PERMISSION_REQUEST_CODE = 4004
 private const val PERMISSIONS_CHANNEL = "com.wowai.app/permissions"
 private const val OVERLAY_CHANNEL = "com.wowai.app/overlay"
+private const val UPDATE_CHANNEL = "com.wowai.app/update"
 
 /**
  * Phase 2 Block 6 + Phase 6 Part D: real Android call integration and the
@@ -48,11 +53,20 @@ private const val OVERLAY_CHANNEL = "com.wowai.app/overlay"
  * a settings screen, not a runtime dialog - hence its own
  * startActivityForResult/onActivityResult path), and `start`/`stop` control
  * WowFloatingButtonService, the actual overlay Window.
+ *
+ * Phase 6 Part T adds a third channel, UPDATE_CHANNEL, for the real
+ * GitHub-Release update flow: `currentVersion`/`downloadsDir` give Dart
+ * what it needs to check/download a real release APK, and
+ * `hasInstallPermission`/`requestInstallPermission`/`installApk` drive the
+ * real REQUEST_INSTALL_PACKAGES grant (another settings-screen permission,
+ * Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES) and hand the downloaded file
+ * to the real system package installer via FileProvider.
  */
 class MainActivity : FlutterActivity() {
     private var pendingPermissionsResult: MethodChannel.Result? = null
     private var pendingRoleResult: MethodChannel.Result? = null
     private var pendingOverlayResult: MethodChannel.Result? = null
+    private var pendingInstallPermissionResult: MethodChannel.Result? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,6 +99,74 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, UPDATE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "currentVersion" -> result.success(currentVersion())
+                    "downloadsDir" -> result.success(updatesDir().absolutePath)
+                    "hasInstallPermission" -> result.success(packageManager.canRequestPackageInstalls())
+                    "requestInstallPermission" -> requestInstallPermission(result)
+                    "installApk" -> installApk(call.argument<String>("path"), result)
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun currentVersion(): Map<String, Any> {
+        val info = packageManager.getPackageInfo(packageName, 0)
+        return mapOf(
+            "versionName" to (info.versionName ?: "0.0.0"),
+            "versionCode" to PackageInfoCompat.getLongVersionCode(info),
+        )
+    }
+
+    private fun updatesDir(): File {
+        val dir = File(getExternalFilesDir(null), "updates")
+        dir.mkdirs()
+        return dir
+    }
+
+    private fun requestInstallPermission(result: MethodChannel.Result) {
+        if (packageManager.canRequestPackageInstalls()) {
+            result.success(true)
+            return
+        }
+        if (pendingInstallPermissionResult != null) {
+            result.error("BUSY", "An install-permission request is already in progress", null)
+            return
+        }
+        pendingInstallPermissionResult = result
+        Log.i(TAG, "Requesting REQUEST_INSTALL_PACKAGES via settings screen")
+        val intent = Intent(
+            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+            Uri.parse("package:$packageName"),
+        )
+        startActivityForResult(intent, INSTALL_PERMISSION_REQUEST_CODE)
+    }
+
+    private fun installApk(path: String?, result: MethodChannel.Result) {
+        if (path.isNullOrBlank()) {
+            result.error("BAD_ARGS", "installApk requires a real file path", null)
+            return
+        }
+        val file = File(path)
+        if (!file.exists()) {
+            result.error("NOT_FOUND", "No downloaded APK at $path", null)
+            return
+        }
+        if (!packageManager.canRequestPackageInstalls()) {
+            result.error("NO_PERMISSION", "REQUEST_INSTALL_PACKAGES is not granted", null)
+            return
+        }
+        val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(uri, "application/vnd.android.package-archive")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        Log.i(TAG, "Launching real package installer for $path")
+        startActivity(intent)
+        result.success(true)
     }
 
     private fun requestOverlayPermission(result: MethodChannel.Result) {
@@ -204,6 +286,12 @@ class MainActivity : FlutterActivity() {
             Log.i(TAG, "Overlay permission request result: granted=$granted")
             pendingOverlayResult?.success(granted)
             pendingOverlayResult = null
+        }
+        if (requestCode == INSTALL_PERMISSION_REQUEST_CODE) {
+            val granted = packageManager.canRequestPackageInstalls()
+            Log.i(TAG, "Install-permission request result: granted=$granted")
+            pendingInstallPermissionResult?.success(granted)
+            pendingInstallPermissionResult = null
         }
     }
 }

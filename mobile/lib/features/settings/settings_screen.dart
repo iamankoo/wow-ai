@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../../core/api_client.dart';
 import '../../core/floating_button_controller.dart';
 import '../../core/permissions_bridge.dart';
+import '../../core/update_bridge.dart';
+import '../../core/update_checker.dart';
 import '../../core/wow_theme.dart';
 
 /// Phase 6 Part O - "at minimum support: language, voice, floating WOW
@@ -13,6 +15,12 @@ import '../../core/wow_theme.dart';
 /// /users/{id} for language/voice, the real permissions MethodChannel for
 /// status, and real persisted local storage for the floating-button
 /// preference. Nothing here is decorative.
+///
+/// Phase 6 Part T's ABOUT section adds the real update flow: "Check for
+/// Updates" hits GitHub's real Releases API for this repository, and a
+/// found update is actually downloaded and handed to the real Android
+/// package installer (WowUpdateBridge/WowUpdateChecker) - never a
+/// simulated check.
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key, required this.apiClient, required this.user});
 
@@ -30,6 +38,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _busy = false;
   String? _error;
   WowPermissionStatus? _permissionStatus;
+  String? _currentVersionLabel;
+  bool _checkingUpdate = false;
+  double? _downloadProgress; // null = not downloading
 
   @override
   void initState() {
@@ -38,6 +49,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         .then((v) => mounted ? setState(() => _floatingButtonEnabled = v) : null);
     WowPermissionsBridge.status()
         .then((s) => mounted ? setState(() => _permissionStatus = s) : null);
+    WowUpdateBridge.currentVersion().then((v) {
+      if (mounted) setState(() => _currentVersionLabel = v.$1);
+    });
   }
 
   Future<void> _savePreferences() async {
@@ -67,6 +81,88 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Future<void> _toggleFloatingButton(bool value) async {
     final actual = await FloatingButtonController.setEnabled(context, value);
     if (mounted) setState(() => _floatingButtonEnabled = actual);
+  }
+
+  Future<void> _checkForUpdates() async {
+    setState(() => _checkingUpdate = true);
+    try {
+      final update = await WowUpdateChecker.checkForUpdate();
+      if (!mounted) return;
+      if (update == null) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text("You're on the latest version")));
+        return;
+      }
+      await _offerUpdate(update);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Could not check for updates: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _checkingUpdate = false);
+    }
+  }
+
+  Future<void> _offerUpdate(WowUpdateInfo update) async {
+    final proceed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: WowColors.surface,
+        title: Text('WOW AI v${update.version} available',
+            style: const TextStyle(color: Colors.white, fontSize: 16)),
+        content: SingleChildScrollView(
+          child: Text(
+            update.releaseNotes.isEmpty ? 'A new version is available.' : update.releaseNotes,
+            style: const TextStyle(color: WowColors.textSecondary, fontSize: 13),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Later', style: TextStyle(color: WowColors.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Download & Install', style: TextStyle(color: WowColors.primaryBlue)),
+          ),
+        ],
+      ),
+    );
+    if (proceed == true) await _downloadAndInstall(update);
+  }
+
+  Future<void> _downloadAndInstall(WowUpdateInfo update) async {
+    setState(() => _downloadProgress = 0);
+    try {
+      final path = await WowUpdateChecker.downloadApk(
+        update.downloadUrl,
+        onProgress: (p) {
+          if (mounted) setState(() => _downloadProgress = p);
+        },
+      );
+      var granted = await WowUpdateBridge.hasInstallPermission();
+      if (!granted) granted = await WowUpdateBridge.requestInstallPermission();
+      if (!granted) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'WOW needs "Install unknown apps" permission to install the update.',
+              ),
+            ),
+          );
+        }
+        return;
+      }
+      await WowUpdateBridge.installApk(path);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Update failed: $e')));
+      }
+    } finally {
+      if (mounted) setState(() => _downloadProgress = null);
+    }
   }
 
   Widget _sectionLabel(String text) => Padding(
@@ -218,6 +314,56 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         ? null
                         : (status.callScreeningRoleAvailable ? status.callScreeningRole : true),
                   ),
+                ],
+              ),
+            ),
+            _sectionLabel('ABOUT'),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: WowColors.surface,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: WowColors.border),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Version ${_currentVersionLabel ?? '...'}',
+                      style: const TextStyle(color: WowColors.textSecondary, fontSize: 13)),
+                  const SizedBox(height: 12),
+                  if (_downloadProgress != null)
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        LinearProgressIndicator(
+                          value: _downloadProgress! > 0 ? _downloadProgress : null,
+                          color: WowColors.primaryBlue,
+                          backgroundColor: WowColors.surfaceVariant,
+                        ),
+                        const SizedBox(height: 6),
+                        const Text('Downloading update...',
+                            style: TextStyle(color: WowColors.textMuted, fontSize: 11.5)),
+                      ],
+                    )
+                  else
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: _checkingUpdate ? null : _checkForUpdates,
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: WowColors.border),
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        ),
+                        child: _checkingUpdate
+                            ? const SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: WowColors.primaryBlue))
+                            : const Text('Check for Updates', style: TextStyle(color: Colors.white)),
+                      ),
+                    ),
                 ],
               ),
             ),

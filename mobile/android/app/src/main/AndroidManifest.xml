@@ -23,6 +23,13 @@
          decorative toggle. Granted via the system's "display over other
          apps" settings screen, not a runtime dialog. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- Phase 6 Part T: the real GitHub-Release-based update checker -
+         downloads a real APK asset and installs it via a real Android
+         package-install intent. Granting the underlying per-source
+         "install unknown apps" permission still requires a dedicated
+         settings screen (Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES),
+         same pattern as SYSTEM_ALERT_WINDOW above. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:label="WOW AI"
@@ -62,5 +69,20 @@
         <service
             android:name=".WowFloatingButtonService"
             android:exported="false" />
+
+        <!-- Phase 6 Part T: exposes the downloaded update APK (written to
+             getExternalFilesDir()/updates by the Dart update checker) to
+             the system package installer via a content:// URI, since
+             Android forbids installing from a plain file:// path/exposing
+             app-private storage directly. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 </manifest>
