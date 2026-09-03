@@ -9,6 +9,7 @@ simulated personal call" (see docs/ARCHITECTURE.md "Definition of done"):
 everything except the audio source/sink is the real code path.
 """
 
+from app.agent.context_profile_repository import InMemoryContextProfileRepository
 from app.agent.orchestrator import WowAgent, build_default_tool_registry
 from app.agent.summary_repository import InMemorySummaryRepository
 from app.brain.state_repository import InMemoryStateRepository
@@ -27,7 +28,9 @@ async def test_simulated_call_full_lifecycle():
         user_id="u1",
         contact={"id": "contact-1", "name": "Priya", "relationship": "friend"},
     )
-    tools = build_default_tool_registry(memory_store, InMemorySummaryRepository())
+    tools = build_default_tool_registry(
+        memory_store, InMemorySummaryRepository(), InMemoryContextProfileRepository()
+    )
     agent = WowAgent(
         RuleBasedLanguageModelProvider(),
         FakeContextEngine(context),
@@ -63,7 +66,9 @@ async def test_simulated_call_full_lifecycle():
 
 async def test_simulated_call_produces_outbound_audio_for_every_turn():
     memory_store = InMemoryMemoryStore()
-    tools = build_default_tool_registry(memory_store, InMemorySummaryRepository())
+    tools = build_default_tool_registry(
+        memory_store, InMemorySummaryRepository(), InMemoryContextProfileRepository()
+    )
     agent = WowAgent(
         RuleBasedLanguageModelProvider(),
         FakeContextEngine(),
@@ -89,7 +94,9 @@ async def test_simulated_call_produces_outbound_audio_for_every_turn():
 
 async def test_simulated_call_turn_count_persists_via_agent_state():
     memory_store = InMemoryMemoryStore()
-    tools = build_default_tool_registry(memory_store, InMemorySummaryRepository())
+    tools = build_default_tool_registry(
+        memory_store, InMemorySummaryRepository(), InMemoryContextProfileRepository()
+    )
     agent = WowAgent(
         RuleBasedLanguageModelProvider(),
         FakeContextEngine(),

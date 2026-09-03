@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
+from app.agent.context_profile_repository import SqlContextProfileRepository
 from app.agent.orchestrator import WowAgent, build_default_tool_registry
 from app.agent.policy import PolicyEngine
 from app.agent.summary_repository import SqlSummaryRepository
@@ -65,7 +66,10 @@ async def get_brain() -> AsyncGenerator[AgentRuntime, None]:
 
         if settings.agent_runtime == "wow_agent":
             summary_repo = SqlSummaryRepository(session)
-            tool_registry = build_default_tool_registry(memory_store, summary_repo)
+            context_profile_repo = SqlContextProfileRepository(session)
+            tool_registry = build_default_tool_registry(
+                memory_store, summary_repo, context_profile_repo
+            )
             policy_engine = PolicyEngine(
                 min_sensitive_confidence=settings.policy_min_sensitive_confidence
             )

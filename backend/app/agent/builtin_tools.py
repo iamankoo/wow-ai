@@ -1,12 +1,14 @@
-"""The initial, safe internal-operation tools available to the WOW Agent
-orchestrator (see docs "Tool system"). Each wraps an existing storage
-abstraction - no tool here has a side effect beyond what
-`MemoryStore`/`SummaryRepository` already expose, and every argument is
+"""The safe internal-operation tools available to the WOW Agent orchestrator
+(see docs "Tool system"). Each wraps an existing storage abstraction - no
+tool here has a side effect beyond what `MemoryStore`/`SummaryRepository`/
+`ContextProfileRepository` already expose, and every argument is
 schema-validated by `Tool.validate` before `run` is ever called.
 """
 
+from app.agent.context_profile_repository import ContextProfileRepository
 from app.agent.summary_repository import SummaryRepository
-from app.agent.tools import Tool, ToolContext
+from app.agent.tools import Tool, ToolContext, ToolValidationError
+from app.brain.taxonomy import CONTEXT_DESCRIPTIONS, ContextMode
 from app.interfaces.memory_store import MemoryStore
 
 
@@ -46,3 +48,36 @@ class CreateSummaryTool(Tool):
             summary_text=arguments["summary_text"],
         )
         return {"summary_id": summary_id}
+
+
+class SetContextTool(Tool):
+    name = "set_context"
+    description = "Persist a new active context mode (sleeping, busy, meeting, etc) for the user."
+    schema = {"context_mode": str}
+
+    def __init__(self, repository: ContextProfileRepository):
+        self._repo = repository
+
+    def validate(self, arguments: dict) -> None:
+        super().validate(arguments)
+        # Defense in depth: the orchestrator already only forwards a
+        # taxonomy-valid context_mode (see is_valid_context in
+        # app.brain.taxonomy), but a tool must never trust an out-of-taxonomy
+        # value just because it type-checks as a string - same principle
+        # PolicyEngine applies to actions.
+        value = arguments["context_mode"]
+        if value not in ContextMode.__members__:
+            raise ToolValidationError(
+                f"{self.name}: '{value}' is not a known context mode"
+            )
+
+    async def run(self, ctx: ToolContext, arguments: dict) -> dict:
+        context_mode = arguments["context_mode"]
+        instructions = CONTEXT_DESCRIPTIONS[ContextMode[context_mode]]
+        profile_id = await self._repo.set_active(
+            user_id=ctx.user_id,
+            name=context_mode,
+            instructions=instructions,
+            contact_id=ctx.contact_id,
+        )
+        return {"profile_id": profile_id, "context_mode": context_mode}

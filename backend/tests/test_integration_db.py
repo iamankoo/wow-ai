@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 from datetime import datetime, timedelta, timezone
 
 from app.agent.call_recorder import CallRecorder
+from app.agent.context_profile_repository import SqlContextProfileRepository
 from app.agent.orchestrator import WowAgent, build_default_tool_registry
 from app.agent.summary_repository import SqlSummaryRepository
 from app.db.base import Base
@@ -164,7 +165,9 @@ async def test_simulated_call_persists_call_history_via_recorder(session):
     memory_store = PgVectorMemoryStore(session)
     context_engine = DefaultContextEngine(session, memory_store)
     state_repo = SqlStateRepository(session)
-    tools = build_default_tool_registry(memory_store, SqlSummaryRepository(session))
+    tools = build_default_tool_registry(
+        memory_store, SqlSummaryRepository(session), SqlContextProfileRepository(session)
+    )
     agent = WowAgent(RuleBasedLanguageModelProvider(), context_engine, state_repo, tools)
     recorder = CallRecorder(session, SqlSummaryRepository(session))
 
@@ -204,6 +207,61 @@ async def test_simulated_call_persists_call_history_via_recorder(session):
     assert "Caller" in summary.summary_text and "WOW" in summary.summary_text
 
 
+async def test_set_context_tool_writes_a_profile_default_context_engine_can_read(session):
+    """Proves the ContextProfile write path (SqlContextProfileRepository /
+    set_context tool) and the pre-existing read path (DefaultContextEngine)
+    agree against a real database: a SET_CONTEXT action executed through the
+    full WowAgent stack must be visible to the very next turn's context
+    lookup, not just to a direct row query."""
+    user = User(display_name="Aniket", phone_number="+10000000004")
+    session.add(user)
+    await session.flush()
+    await session.commit()
+
+    memory_store = PgVectorMemoryStore(session)
+    context_engine = DefaultContextEngine(session, memory_store)
+    state_repo = SqlStateRepository(session)
+    tools = build_default_tool_registry(
+        memory_store, SqlSummaryRepository(session), SqlContextProfileRepository(session)
+    )
+    agent = WowAgent(RuleBasedLanguageModelProvider(), context_engine, state_repo, tools)
+
+    from app.interfaces.llm import LLMResponse
+
+    class _StubLLM:
+        async def generate(self, messages, *, context=None):
+            return LLMResponse(
+                content="",
+                intent="SET_CONTEXT",
+                slots={"action": "SET_CONTEXT", "context_mode": "MEETING"},
+                metadata={"confidence": {"intent": 0.97, "action": 0.95, "context_mode": 0.95}},
+            )
+
+    agent._llm = _StubLLM()  # swap the provider only - everything else is the real stack
+
+    action = await agent.handle_input(
+        user_id=str(user.id), text="I'm in a meeting, handle my calls", conversation_id="conv-ctx"
+    )
+    await session.commit()
+
+    assert action.payload["policy_decision"] == "allow"
+    assert action.payload["tool_results"] == [
+        {"tool": "set_context", "success": True, "error": None}
+    ]
+
+    stmt = select(ContextProfile).where(
+        ContextProfile.user_id == user.id, ContextProfile.is_active.is_(True)
+    )
+    row = (await session.execute(stmt)).scalars().first()
+    assert row is not None
+    assert row.name == "MEETING"
+
+    # The read side (already pre-existing) must independently see the same row.
+    built_context = await context_engine.build_context(user_id=str(user.id))
+    assert built_context.context_profile is not None
+    assert built_context.context_profile["name"] == "MEETING"
+
+
 async def test_run_simulated_call_rejects_explicit_ids_when_recorder_given(session):
     user = User(display_name="Aniket", phone_number="+10000000003")
     session.add(user)
@@ -212,7 +270,9 @@ async def test_run_simulated_call_rejects_explicit_ids_when_recorder_given(sessi
 
     memory_store = PgVectorMemoryStore(session)
     context_engine = DefaultContextEngine(session, memory_store)
-    tools = build_default_tool_registry(memory_store, SqlSummaryRepository(session))
+    tools = build_default_tool_registry(
+        memory_store, SqlSummaryRepository(session), SqlContextProfileRepository(session)
+    )
     agent = WowAgent(
         RuleBasedLanguageModelProvider(), context_engine, SqlStateRepository(session), tools
     )

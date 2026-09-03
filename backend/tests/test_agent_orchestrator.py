@@ -1,6 +1,7 @@
 """WowAgent (opt-in orchestrator) end-to-end tests using fakes for every
 provider - no database required. See app/agent/orchestrator.py."""
 
+from app.agent.context_profile_repository import InMemoryContextProfileRepository
 from app.agent.orchestrator import WowAgent, build_default_tool_registry
 from app.agent.summary_repository import InMemorySummaryRepository
 from app.brain.state_repository import InMemoryStateRepository
@@ -17,10 +18,12 @@ def _agent(
     memory_store: InMemoryMemoryStore | None = None,
     context: ConversationContext | None = None,
     feedback_repository: FeedbackRepository | None = None,
+    context_profile_repository: InMemoryContextProfileRepository | None = None,
 ) -> WowAgent:
     memory_store = memory_store or InMemoryMemoryStore()
     summary_repo = InMemorySummaryRepository()
-    tools = build_default_tool_registry(memory_store, summary_repo)
+    context_profile_repo = context_profile_repository or InMemoryContextProfileRepository()
+    tools = build_default_tool_registry(memory_store, summary_repo, context_profile_repo)
     return WowAgent(
         FakeLLMProvider(response),
         FakeContextEngine(context),
@@ -172,6 +175,41 @@ async def test_no_feedback_repository_configured_is_a_no_op():
     agent = _agent(response)  # feedback_repository=None, the default
     action = await agent.handle_input(user_id="u1", text="test", conversation_id="c1")
     assert action.payload["turn_count"] == 1
+
+
+async def test_high_confidence_set_context_action_activates_a_profile():
+    ctx_repo = InMemoryContextProfileRepository()
+    response = LLMResponse(
+        content="",
+        intent="SET_CONTEXT",
+        slots={"action": "SET_CONTEXT", "context_mode": "MEETING"},
+        metadata={"confidence": {"intent": 0.95, "action": 0.9, "context_mode": 0.92}},
+    )
+    agent = _agent(response, context_profile_repository=ctx_repo)
+    action = await agent.handle_input(
+        user_id="u1", text="I'm in a meeting, handle my calls", conversation_id="c1"
+    )
+    assert action.payload["policy_decision"] == "allow"
+    assert action.payload["tool_results"] == [
+        {"tool": "set_context", "success": True, "error": None}
+    ]
+    assert ctx_repo.active_name(user_id="u1") == "MEETING"
+
+
+async def test_set_context_action_without_a_context_mode_fails_cleanly():
+    ctx_repo = InMemoryContextProfileRepository()
+    response = LLMResponse(
+        content="",
+        intent="SET_CONTEXT",
+        slots={"action": "SET_CONTEXT"},  # no context_mode slot predicted
+        metadata={"confidence": {"intent": 0.95, "action": 0.9}},
+    )
+    agent = _agent(response, context_profile_repository=ctx_repo)
+    action = await agent.handle_input(user_id="u1", text="set my context", conversation_id="c1")
+    assert action.payload["tool_results"] == [
+        {"tool": "set_context", "success": False, "error": "no_context_mode"}
+    ]
+    assert ctx_repo.active_name(user_id="u1") is None
 
 
 async def test_unknown_caller_transfer_request_hands_off():

@@ -324,7 +324,7 @@ call data. Intent's deployed weights reflect its last trained epoch
 rather than its best epoch (94.27% vs. 94.54%, see §4's caveat) - a minor,
 documented gap, not a hidden one.
 
-## 8. Next recommended step
+## 8. Next recommended step (superseded by §9's "Agent Core completion" work - kept for history)
 
 v3 training is done and now has a genuine held-out test-set number (§4b:
 94.15%/90.86%/95.30% intent/context/action, 100% structured validity) -
@@ -337,8 +337,57 @@ product decision, not a missing-data blocker; if intent's known
 last-epoch-vs-best-epoch gap (§4's caveat, 0.27pp) matters, recover the
 true best-epoch weights from
 `training/models/wow-brain/v3_pre_kaggle_backup/intent/checkpoint_best.pt`
-first; (2) add tools + policy coverage for `SET_CONTEXT` (would need a
-`ContextProfile` write path) so more of the taxonomy is actually
-executable, not just reported; (3) begin real STT integration (e.g.
-faster-whisper) behind the existing `SpeechToTextProvider` interface,
-since that is the actual blocker to a real (not simulated) call.
+first; (2) ~~add tools + policy coverage for `SET_CONTEXT`~~ **done, see §9**;
+(3) begin real STT integration (e.g. faster-whisper) behind the existing
+`SpeechToTextProvider` interface, since that is the actual blocker to a
+real (not simulated) call - still not started, out of scope for the
+current "Agent Core completion" round per explicit instruction.
+
+## 9. Agent Core completion
+
+Full repository audit (this round, before any code change) found the
+agent orchestration layer was real but incomplete: only 2 of the
+taxonomy's 13 actions (`SAVE_MEMORY`, `CREATE_SUMMARY`) had a real tool,
+`SET_CONTEXT` - the most central action - was only ever *reported*, never
+executed, and the `PolicyVerdict.CLARIFY` path was single-turn (a
+low-confidence prediction was declined but never revisited). This round
+closes those three gaps, in the dependency order the user specified, with
+tests run and a doc/commit/push cycle after each block.
+
+### Block 1: ContextProfile write path + real `SET_CONTEXT` tool
+
+- `app/agent/context_profile_repository.py` (new): `ContextProfileRepository`
+  ABC + `SqlContextProfileRepository` + `InMemoryContextProfileRepository`,
+  the exact same pattern as `StateRepository`/`SummaryRepository`.
+  `set_active` deactivates whichever other profile is active in the same
+  `(user_id, contact_id)` scope and activates/creates the target one;
+  `clear_active` deactivates without requiring a name (used by Block 2's
+  `clear_context` tool).
+- `SetContextTool` (`app/agent/builtin_tools.py`): validates `context_mode`
+  against the taxonomy (`ContextMode.__members__`) before writing, in
+  addition to the type check `Tool.validate` already does - a tool never
+  trusts an out-of-taxonomy value, same principle `PolicyEngine` applies
+  to actions.
+- `_ACTION_TOOL_MAP[Action.SET_CONTEXT] = "set_context"` in the
+  orchestrator, plus a `no_context_mode` guard (mirroring the existing
+  `no_conversation_id` guard for `create_summary`) so a `SET_CONTEXT`
+  prediction with no `context_mode` slot fails cleanly instead of hitting
+  a generic type-validation error.
+- `build_default_tool_registry` now takes a required
+  `context_profile_repository` argument - updated at all 6 call sites
+  (`api/deps.py`, `test_agent_orchestrator.py`, `test_call_simulation.py`
+  x3, `test_integration_db.py` x2). Required, not defaulted to an
+  in-memory fallback, so a caller can never silently get a
+  throwaway-store "success" in production.
+
+**Verified against a real database**, not just fakes:
+`test_set_context_tool_writes_a_profile_default_context_engine_can_read`
+(`backend/tests/test_integration_db.py`, gated behind `TEST_DATABASE_URL`)
+drives a full `WowAgent` turn predicting `SET_CONTEXT`/`MEETING`, commits,
+then independently re-reads the context through the pre-existing
+`DefaultContextEngine` and confirms it sees the same row - proving the new
+write path and the old read path actually agree, not just that each
+compiles in isolation.
+
+Tests after this block: 156 passed, 9 skipped (was 151/8 - +5 new unit
+tests, +1 new DB-gated integration test). No regressions.

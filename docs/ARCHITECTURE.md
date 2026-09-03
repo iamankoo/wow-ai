@@ -158,13 +158,18 @@ decision, confidence. It is never a hidden global: it is loaded from and
 saved back to the existing `AgentState` table (as a JSON blob under key
 `"conversation_state"`) on every turn.
 
-The initial tool set (`app/agent/builtin_tools.py`) is deliberately small
-and real, not a placeholder list: `save_memory` (backed by the existing
-`MemoryStore`) and `create_summary` (backed by a new `SummaryRepository`,
-mirroring `StateRepository`'s ABC + SQL + in-memory-test-double pattern).
-Actions that need a real API-side effect that doesn't exist yet
-(`SET_CONTEXT` actually flipping a `ContextProfile`, `ANSWER_CALL` actually
-answering a call) are reported in the response payload
+The tool set (`app/agent/builtin_tools.py`) is deliberately small and real,
+not a placeholder list: `save_memory` (backed by the existing `MemoryStore`),
+`create_summary` (backed by `SummaryRepository`), and `set_context` (backed
+by `ContextProfileRepository`, `app/agent/context_profile_repository.py` -
+mirroring `StateRepository`'s ABC + SQL + in-memory-test-double pattern; a
+predicted `SET_CONTEXT` action now really deactivates the previous active
+`ContextProfile` row and activates/creates the new one, read back correctly
+by the pre-existing `DefaultContextEngine`, proven end-to-end against a real
+Postgres instance by `test_set_context_tool_writes_a_profile_default_context_engine_can_read`
+in `backend/tests/test_integration_db.py`). Actions that still need a real
+API-side effect that doesn't exist yet (`ANSWER_CALL`/`TRANSFER_CALL`/
+`END_CALL` needing real telephony) are reported in the response payload
 (`candidate_action`) but do not invoke a tool - claiming to execute them
 would be exactly the "fake functionality" this project's engineering
 principles rule out.

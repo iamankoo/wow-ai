@@ -17,7 +17,8 @@ authorizes a sensitive action, and a tool failure degrades to a spoken
 apology rather than raising through to the caller.
 """
 
-from app.agent.builtin_tools import CreateSummaryTool, SaveMemoryTool
+from app.agent.builtin_tools import CreateSummaryTool, SaveMemoryTool, SetContextTool
+from app.agent.context_profile_repository import ContextProfileRepository
 from app.agent.policy import PolicyEngine, PolicyVerdict
 from app.agent.response import generate_response
 from app.agent.state import CallLifecycleStatus, ConversationState
@@ -37,13 +38,17 @@ from app.observability.timing import StageTimings
 _STATE_KEY = "conversation_state"
 
 # Which tool (if any) a given resolved Action maps onto. Actions with no
-# entry here are still reported to the caller (payload.candidate_action)
-# but do not trigger a tool call yet - e.g. SET_CONTEXT/ANSWER_CALL need a
-# real API-side effect (ContextProfile / telephony) that doesn't exist yet;
-# reporting them without pretending to execute them is the honest option.
+# entry here are still reported to the caller (payload.candidate_action) but
+# do not trigger a tool call - either because there is no side effect to
+# perform (ASK_CALLER_REASON is purely conversational, see
+# app.agent.response._ACTION_TEMPLATES; NO_ACTION is a no-op by definition),
+# or because executing them needs real telephony (ANSWER_CALL, TRANSFER_CALL,
+# END_CALL) that does not exist yet in this phase - reporting them without
+# pretending to execute them is the honest option.
 _ACTION_TOOL_MAP: dict[str, str] = {
     Action.SAVE_MEMORY.value: SaveMemoryTool.name,
     Action.CREATE_SUMMARY.value: CreateSummaryTool.name,
+    Action.SET_CONTEXT.value: SetContextTool.name,
 }
 
 
@@ -56,10 +61,16 @@ def _first_slot(slots: dict, *names: str) -> str | None:
 
 
 def build_default_tool_registry(
-    memory_store: MemoryStore, summary_repository: SummaryRepository
+    memory_store: MemoryStore,
+    summary_repository: SummaryRepository,
+    context_profile_repository: ContextProfileRepository,
 ) -> ToolRegistry:
     return ToolRegistry(
-        [SaveMemoryTool(memory_store), CreateSummaryTool(summary_repository)]
+        [
+            SaveMemoryTool(memory_store),
+            CreateSummaryTool(summary_repository),
+            SetContextTool(context_profile_repository),
+        ]
     )
 
 
@@ -174,6 +185,12 @@ class WowAgent(AgentRuntime):
             if tool_name == CreateSummaryTool.name and conversation_id is None:
                 tool_results.append(
                     {"tool": tool_name, "success": False, "error": "no_conversation_id"}
+                )
+                tool_names.append(tool_name)
+                tool_failed = True
+            elif tool_name == SetContextTool.name and not context_mode:
+                tool_results.append(
+                    {"tool": tool_name, "success": False, "error": "no_context_mode"}
                 )
                 tool_names.append(tool_name)
                 tool_failed = True
@@ -296,4 +313,6 @@ def _build_tool_arguments(tool_name: str, text: str, state: ConversationState) -
     if tool_name == CreateSummaryTool.name:
         transcript_text = "\n".join(f"{t.speaker}: {t.text}" for t in state.transcript)
         return {"conversation_id": state.session_id, "summary_text": transcript_text}
+    if tool_name == SetContextTool.name:
+        return {"context_mode": state.context_mode}
     return {}

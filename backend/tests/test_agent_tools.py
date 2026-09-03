@@ -1,10 +1,14 @@
 """ToolRegistry: authorization, validation, timeout, audit, and failure
-isolation - see app/agent/tools.py."""
+isolation - see app/agent/tools.py. Also covers the builtin_tools.py Tool
+subclasses that wrap a real storage abstraction (context profile, memory,
+user settings)."""
 
 import asyncio
 
 import pytest
 
+from app.agent.builtin_tools import SetContextTool
+from app.agent.context_profile_repository import InMemoryContextProfileRepository
 from app.agent.tools import (
     Tool,
     ToolContext,
@@ -120,3 +124,29 @@ async def test_every_invocation_is_audited(ctx):
     assert events[0]["success"] is True
     assert events[1]["tool_name"] == "does_not_exist"
     assert events[1]["success"] is False
+
+
+async def test_set_context_tool_activates_a_profile(ctx):
+    repo = InMemoryContextProfileRepository()
+    registry = ToolRegistry([SetContextTool(repo)])
+    result = await registry.invoke("set_context", ctx, {"context_mode": "MEETING"})
+    assert result.success is True
+    assert result.output["context_mode"] == "MEETING"
+    assert repo.active_name(user_id="u1") == "MEETING"
+
+
+async def test_set_context_tool_switching_deactivates_the_previous_profile(ctx):
+    repo = InMemoryContextProfileRepository()
+    registry = ToolRegistry([SetContextTool(repo)])
+    await registry.invoke("set_context", ctx, {"context_mode": "SLEEPING"})
+    await registry.invoke("set_context", ctx, {"context_mode": "MEETING"})
+    assert repo.active_name(user_id="u1") == "MEETING"
+
+
+async def test_set_context_tool_rejects_out_of_taxonomy_context_mode(ctx):
+    repo = InMemoryContextProfileRepository()
+    registry = ToolRegistry([SetContextTool(repo)])
+    result = await registry.invoke("set_context", ctx, {"context_mode": "ON_THE_MOON"})
+    assert result.success is False
+    assert "not a known context mode" in result.error
+    assert repo.active_name(user_id="u1") is None
