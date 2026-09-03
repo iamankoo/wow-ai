@@ -338,11 +338,11 @@ Two structurally separate systems, deliberately kept apart:
 ## 14. Testing
 
 ```
-backend/tests/    241 passed, 10 skipped (skipped tests require a live TEST_DATABASE_URL;
+backend/tests/    243 passed, 10 skipped (skipped tests require a live TEST_DATABASE_URL;
                    includes real-model/real-signal-processing tests against the recovered
-                   WOW Brain v3, a real local faster-whisper STT model, a real local Piper
-                   TTS model, and real WebRTC VAD against real speech audio - all real when
-                   their optional artifacts/dependencies are present)
+                   WOW Brain v3, real local faster-whisper STT, real local Piper TTS, real
+                   WebRTC VAD, and a full real-audio-in to real-audio-out media pipeline
+                   integration test - all real when their optional dependencies are present)
 training/tests/   254 passed
 ```
 

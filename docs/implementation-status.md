@@ -754,3 +754,64 @@ matching the optional-dependency pattern used for STT/TTS.
 
 Tests after this block: **241 passed, 10 skipped** (was 232/10).
 `training/tests/`: unchanged. No regressions.
+
+### Block 5: integrate the media pipeline
+
+Wires `audio in -> VAD -> STT -> WowAgent -> TTS -> audio out` for the
+first time - every real provider from Blocks 2-4 was previously only
+verified in isolation against its own interface; `app/media/pipeline.py`
+(`MediaPipeline`) is the first thing that actually connects them to each
+other and to the pre-existing, already-real `WowAgent`/WOW-Brain-v3 stack
+from Agent Core. Deliberately does **not** touch call control
+(`TelephonyProvider.answer_call`/`end_call`, Android
+`CallScreeningService`/`InCallService`) - that's Block 6; this is purely
+the media-processing layer a real telephony integration would sit on top
+of, built entirely from existing provider interfaces
+(`SpeechToTextProvider`/`TextToSpeechProvider`/`VoiceActivityDetector`/
+`AgentRuntime`), so it works identically whether given the Phase 1
+simulators or Phase 2's real implementations.
+
+`MediaPipeline.process_call_audio()` feeds a chunked audio stream (any
+chunk size, sync or async iterable) through a VAD session; on each
+confirmed `SPEECH_END`, the captured caller audio is transcribed via the
+real STT provider, the transcript is sent to the real agent, and the
+agent's reply text is synthesized via the real TTS provider - one
+`PipelineTurn` (transcript, agent action, reply audio, reply sample rate)
+per completed utterance. Trailing audio with no closing silence (a
+stream that just ends) is still finalized rather than silently
+discarded. `get_sample_rate()` (Block 3's additive `LocalPiperTTSProvider`
+helper, not part of the `TextToSpeechProvider` ABC) is used
+opportunistically via `getattr`, never required - the pipeline still
+works with a TTS provider that doesn't expose it.
+
+**Verified as a genuine, unbroken real chain - "close the loop" for
+Blocks 2-5**: `backend/tests/test_media_pipeline.py` feeds the same real
+`meeting_context.wav` fixture (Block 2/4's fixture) through the actual
+`MediaPipeline` wired with `WebRtcVoiceActivityDetector`,
+`LocalWhisperSTTProvider`, a real `WowAgent` backed by the recovered WOW
+Brain v3 (`LocalWOWModelProvider`, the same real model Agent Core Block 4
+integration-tested directly), and `LocalPiperTTSProvider` - and confirms,
+end to end:
+
+1. **Real STT**: the actual spoken words ("meeting") were transcribed
+   from real audio, not supplied as text.
+2. **Real WOW Brain v3 + real Agent Core**: the same `SET_CONTEXT`/
+   `MEETING` prediction Agent Core Block 4 verified via direct text
+   input is now reached via real audio instead - `set_context` tool
+   executes, `ContextProfile` shows `MEETING` active.
+3. **Real TTS**: the agent's reply was genuinely synthesized (non-empty
+   audio, correct sample rate), written to an actual WAV file, and
+   reopened/re-validated as genuinely playable PCM audio - the same
+   rigor as Block 3's TTS artifact test, now reached through the full
+   pipeline rather than called directly.
+
+A second test confirms silence-only input produces zero turns and never
+spuriously invokes the agent or TTS.
+
+Gated on the same three optional real components this block connects
+(`pytest.importorskip("faster_whisper")`, `pytest.importorskip("piper")`,
+and the v3 model directory's presence) - skips cleanly, never fakes any
+of them.
+
+Tests after this block: **243 passed, 10 skipped** (was 241/10).
+`training/tests/`: unchanged. No regressions.
