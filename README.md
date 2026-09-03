@@ -205,38 +205,44 @@ run's artifacts were lost to a session-persistence issue; the project
 owner had this repository resume training on Kaggle (2x Tesla T4) a
 second time, this time with persistence correctly configured. Full
 recovery/verification log: [`docs/implementation-status.md`](docs/implementation-status.md) §4.
-Held-out **validation** accuracy (the same split used for early-stopping
-during training - not yet re-checked against the frozen `test.jsonl`,
-see the caveat below):
 
-| Head | Best val_accuracy | Best epoch | Deployed model reflects |
-|---|---|---|---|
-| Intent | 94.54% | 10 | Last epoch (16): **94.27%** - see caveat |
-| Context | 91.62% | 10 | Best epoch (10): 91.62% |
-| Action | 95.61% | 8 | Best epoch (8): 95.61% |
+**Held-out test-set accuracy** (`test.jsonl`, 6,785 examples, frozen -
+never used for training or early stopping; checksum-verified unmodified
+before and after this run; full methodology and the previously-reported/
+now-independently-confirmed comparison:
+[`docs/implementation-status.md`](docs/implementation-status.md) §4b):
 
-**Caveat:** the deployed Intent weights reflect the *last* trained epoch,
-not the *best* one (0.27 percentage-point gap) - the original
-`checkpoint_best.pt` wasn't part of the Kaggle input dataset, so the
-resume couldn't seed "best-so-far" state for that head specifically. Not
-fixed yet; the true best-epoch weights exist locally in
-`training/models/wow-brain/v3_pre_kaggle_backup/` if ever needed. Full
-detail in `docs/implementation-status.md` §4.
+| Metric | v3 |
+|---|---|
+| Intent accuracy | **94.15%** |
+| Context accuracy (n=6,466) | **90.86%** |
+| Action accuracy (n=6,785) | **95.30%** |
+| Structured output validity | **100.00%** |
+| Ambiguous/unknown accuracy (n=125) | **96.00%** |
+| Intent accuracy — Hindi / Hinglish / English | 94.56% / 93.76% / 94.13% |
+
+(For reference, validation-split accuracy - the number early stopping
+watched during training, not an independent check - was 94.27% deployed/
+94.54% best intent, 91.62% context, 95.61% action; see §4b for why the
+deployed intent weights differ slightly from their best-epoch number.)
 
 **Verified for real, not assumed:** every file's size matched byte-for-byte
 between the Kaggle session and the local copy after transfer; each head
 independently loads via `transformers` and produces a forward pass of the
-correct shape; and the actual production class,
+correct shape; the actual production class,
 `LocalWOWModelProvider` (`backend/app/providers/llm/local_wow.py`), was
 run **locally** (CPU, no GPU, no external API) against `training/models/wow-brain/v3/`
 and correctly classified both an English and a Hinglish test utterance
-(`"Main so raha hoon, please handle karo"` → `context_mode=SLEEPING`).
+(`"Main so raha hoon, please handle karo"` → `context_mode=SLEEPING`); and
+the held-out test numbers above come from `evaluate.py`'s real,
+unmodified scoring logic run against the actual frozen test split, not
+an estimate.
 
 **Still not the default** - `MODEL_PROVIDER=rule_based` remains the
-default provider; `local_wow` is opt-in
-(`MODEL_PROVIDER=local_wow` in `.env`) until a held-out `test.jsonl` run
-(not yet performed - see `docs/implementation-status.md` §8) confirms the
-model before promoting it.
+default provider; `local_wow` is opt-in (`MODEL_PROVIDER=local_wow` in
+`.env`). The held-out numbers above clear the bar for promotion, but
+switching the default is a deliberate product decision, not yet made -
+see `docs/implementation-status.md` §8.
 
 Full cloud-training procedure, including the persistence-loss lesson and
 the RNG-restore fix this run needed:
@@ -331,7 +337,7 @@ Two structurally separate systems, deliberately kept apart:
 
 ```
 backend/tests/    151 passed, 8 skipped (skipped tests require a live TEST_DATABASE_URL)
-training/tests/   249 passed
+training/tests/   254 passed
 ```
 
 Run them yourself - see §15.
@@ -427,11 +433,13 @@ wow-ai/
 
 ## 19. Roadmap / next steps
 
-- Run `training/evaluation/evaluate.py` (or an adapted version) against
-  v3 on the frozen `test.jsonl` split (only validation accuracy is
-  verified so far - see §8) and compare against v1/v2.
-- Promote `LocalWOWModelProvider` to the default production provider once
-  v3 clears that held-out evaluation gate.
+- v3's held-out `test.jsonl` evaluation is done (§8: 94.15%/90.86%/95.30%
+  intent/context/action) - `training/evaluation/evaluate.py` now supports
+  `--config`/`--split` for this directly. Comparing against v1/v2 on the
+  same split is still open.
+- Decide whether to promote `LocalWOWModelProvider` to the default
+  production provider - the held-out numbers clear the bar; this is now
+  a product decision, not a missing-data blocker.
 - Real Android `CallScreeningService`/`InCallService` integration.
 - Self-hosted streaming ASR (e.g. faster-whisper) and TTS (e.g.
   Piper/Coqui) implementations of the existing contract-only interfaces.

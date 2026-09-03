@@ -1,6 +1,7 @@
 """Evaluates RuleBasedLanguageModelProvider vs one or more LocalWOWModelProvider
-model versions on the held-out validation set produced by
-training/preprocessing/build_training_set.py.
+model versions on a held-out split (validation by default, or the frozen
+test split - see --split below) produced by
+training/preprocessing/build_training_set.py or training/pipeline/split.py.
 
 This does not hide poor results: every metric is computed straight from
 predictions, and every mismatch is recorded as a failure example. If a local
@@ -13,6 +14,19 @@ Usage:
     python -m training.evaluation.evaluate \\
         --model-dir v0=training/models/wow-brain/v0 \\
         --model-dir v1=training/models/wow-brain/v1
+    python -m training.evaluation.evaluate \\
+        --config training/configs/model_config_v3.yaml \\
+        --model-dir v3=training/models/wow-brain/v3 \\
+        --split test --output training/evaluation/v3_test_report.json
+
+--split defaults to "val" (the same split early stopping watched during
+training - never a fully independent number). "test" scores against the
+frozen, never-trained-on test.jsonl for that dataset version - this
+script only ever reads that file, never writes to it or the training
+loop, so passing --split test cannot leak test data into training.
+--config selects which model_config*.yaml (and therefore which
+dataset_dir) to evaluate against - each WOW Brain version's dataset can
+live in a different versioned directory (see model_config_v3.yaml).
 """
 
 import argparse
@@ -22,6 +36,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from training.training.config import DEFAULT_CONFIG_PATH, REPO_ROOT, TrainingConfig
+from training.training.train import _read_dataset_version
 from training.wow_taxonomy import Action, ContextMode, Intent
 
 BACKEND_DIR = REPO_ROOT / "backend"
@@ -192,48 +207,53 @@ async def _score_local_provider(model_dir: Path, val_records: list[dict]) -> tup
     return report, error, metadata
 
 
-async def run_evaluation(model_dirs: list[tuple[str, Path]]) -> dict:
+async def run_evaluation(
+    model_dirs: list[tuple[str, Path]],
+    config_path: Path = DEFAULT_CONFIG_PATH,
+    split: str = "val",
+) -> dict:
     """model_dirs: ordered list of (provider_name, model_dir) pairs, e.g.
     [("v0", .../v0), ("v1", .../v1)]. Every provider is scored on the same
-    held-out validation set alongside the rule_based baseline."""
-    cfg = TrainingConfig.load(DEFAULT_CONFIG_PATH)
-    val_records = _load_jsonl(cfg.dataset_dir / "val.jsonl")
+    held-out `split` ("val" or "test") alongside the rule_based baseline.
+    `config_path` selects the dataset_dir to load train/{split}.jsonl from -
+    see the module docstring for why this matters across dataset versions."""
+    if split not in ("val", "test"):
+        raise ValueError(f"split must be 'val' or 'test', got {split!r}")
+
+    cfg = TrainingConfig.load(config_path)
+    eval_records = _load_jsonl(cfg.dataset_dir / f"{split}.jsonl")
     train_records = _load_jsonl(cfg.dataset_dir / "train.jsonl")
 
     rule_provider = RuleBasedLanguageModelProvider()
-    rule_predictions = [await _predict_rule_based(rule_provider, r["text"]) for r in val_records]
-    rule_report = _score(val_records, rule_predictions)
+    rule_predictions = [await _predict_rule_based(rule_provider, r["text"]) for r in eval_records]
+    rule_report = _score(eval_records, rule_predictions)
 
     providers: dict[str, dict] = {"rule_based": rule_report}
     model_versions: dict[str, str | None] = {}
     for name, model_dir in model_dirs:
-        report, error, metadata = await _score_local_provider(model_dir, val_records)
+        report, error, metadata = await _score_local_provider(model_dir, eval_records)
         providers[name] = report if report is not None else {"error": error}
         model_versions[name] = metadata.get("model_version")
 
     report = {
         "evaluated_at": datetime.now(timezone.utc).isoformat(),
-        "dataset_version": _dataset_version(),
+        "dataset_version": _read_dataset_version(cfg.dataset_dir),
+        "eval_split": split,
         "model_versions": model_versions,
-        "total_examples": len(train_records) + len(val_records),
+        "total_examples": len(train_records) + len(eval_records),
         "train_examples": len(train_records),
-        "validation_examples": len(val_records),
+        "eval_examples": len(eval_records),
         "providers": providers,
     }
     return report
 
 
-def _dataset_version() -> str:
-    meta_path = REPO_ROOT / "training" / "datasets" / "DATASET_METADATA.json"
-    if meta_path.exists():
-        return json.loads(meta_path.read_text(encoding="utf-8")).get("dataset_version", "unknown")
-    return "unknown"
-
-
 def _print_human_summary(report: dict) -> None:
+    split = report.get("eval_split", "val")
     print(f"Dataset version: {report['dataset_version']}")
+    print(f"Eval split:      {split}")
     print(f"Model versions:  {report['model_versions']}")
-    print(f"Total examples:  {report['total_examples']} (train={report['train_examples']}, val={report['validation_examples']})")
+    print(f"Total examples:  {report['total_examples']} (train={report['train_examples']}, {split}={report['eval_examples']})")
     print()
     for name, r in report["providers"].items():
         print(f"== {name} ==")
@@ -312,6 +332,16 @@ def main() -> None:
              "--model-dir v1=training/models/wow-brain/v1. If omitted, defaults to v0.",
     )
     parser.add_argument(
+        "--config", type=Path, default=DEFAULT_CONFIG_PATH,
+        help="Which model_config*.yaml to load dataset_dir from - e.g. "
+             "training/configs/model_config_v3.yaml. Defaults to v0's config.",
+    )
+    parser.add_argument(
+        "--split", choices=["val", "test"], default="val",
+        help="Which held-out split to evaluate against. 'test' is the frozen "
+             "split - never trained on, never modified by this script.",
+    )
+    parser.add_argument(
         "--output", type=Path,
         default=REPO_ROOT / "training" / "evaluation" / "latest_report.json",
     )
@@ -320,7 +350,7 @@ def main() -> None:
     raw_dirs = args.model_dirs or ["v0=training/models/wow-brain/v0"]
     model_dirs = [_parse_model_dir_arg(raw) for raw in raw_dirs]
 
-    report = asyncio.run(run_evaluation(model_dirs))
+    report = asyncio.run(run_evaluation(model_dirs, config_path=args.config, split=args.split))
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

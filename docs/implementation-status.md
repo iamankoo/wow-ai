@@ -185,27 +185,99 @@ Stated plainly, matching README §18:
    external API - confirming the artifacts are genuinely portable, not
    an artifact of the Kaggle environment.
 
-**What this section does NOT claim:** these are **validation-set**
-accuracies (the same `val.jsonl` split used for early-stopping decisions
-during training), not a fresh run of `training/evaluation/evaluate.py`
-against the frozen, never-touched `test.jsonl` (6,785 examples). That
-held-out test run was not performed this round (to respect the explicit
-instruction to finish, verify, and stop rather than keep running GPU
-jobs) - it is the natural next step before treating these numbers as
-final. Checkpoint files (`checkpoint.pt`/`checkpoint_best.pt`, needed only
-for future resume/retraining, not for inference) were not brought down
-this round either, to keep the transfer small. With session persistence
-now set to "Variables and Files" (unlike the original run), they should
-still be present under `/kaggle/working/wow-ai/training/models/wow-brain/v3/`
-the next time that Kaggle session is started, even though the session
-itself was stopped (via Kaggle's "Stop session" control) at the end of
-this round to free the GPU, per instruction.
+The numbers in the table above are **validation-set** accuracies (the
+same `val.jsonl` split used for early-stopping decisions during
+training) - see §4b immediately below for the genuinely held-out
+**test-set** result, run in a later round.
+
+Checkpoint files (`checkpoint.pt`/`checkpoint_best.pt`, needed only for
+future resume/retraining, not for inference) were not brought down this
+round, to keep the transfer small. With session persistence now set to
+"Variables and Files" (unlike the original run), they should still be
+present under `/kaggle/working/wow-ai/training/models/wow-brain/v3/` the
+next time that Kaggle session is started, even though the session itself
+was stopped (via Kaggle's "Stop session" control) at the end of this
+round to free the GPU, per instruction.
 
 `docs/KAGGLE_TRAINING.md` carries a top-of-file warning about the
 original persistence failure mode, plus the RNG-restore fix, so a future
 training pass doesn't repeat either issue.
 
-## 5. Test results (this round, backend)
+## 4b. Held-out test-set evaluation (frozen `test.jsonl`, 6,785 examples) - verified
+
+Run this round, on the project owner's explicit instruction, using the
+locally-recovered v3 artifacts from §4. This is the genuinely independent
+number §4 was missing: `test.jsonl` was never used for early-stopping
+decisions or any other training-time choice, and this evaluation run
+never writes to it or to the training loop - **checked directly**, not
+just assumed: `test.jsonl`'s SHA-256 (verified against
+`training/datasets/versions/v3.3.0-answer-call/MANIFEST.json` immediately
+before this run) and byte content are identical before and after.
+
+| Metric | rule_based baseline | **v3** | Previously reported (§4, unverifiable) |
+|---|---|---|---|
+| Intent accuracy | 5.13% (93.0% mode collapse to UNKNOWN) | **94.15%** | 93.66% |
+| Context accuracy (n=6,466) | 4.59% | **90.86%** | 89.62% |
+| Action accuracy (n=6,785) | 34.64% | **95.30%** | 95.49% |
+| Structured output validity | 100.00% | **100.00%** | 100% |
+| Ambiguous/unknown accuracy (n=125) | 100.00% | **96.00%** | 96.00% |
+| Intent accuracy - Hindi | 0.09% | **94.56%** | 93.87% |
+| Intent accuracy - Hinglish | 4.96% | **93.76%** | 93.62% |
+| Intent accuracy - English | 9.70% | **94.13%** | 93.52% |
+
+**This independently corroborates the retrain was not a fluke or a
+regression from the originally-reported (lost) run** - every metric
+lands within ~1.5 percentage points of what was reported before the
+original artifacts were lost, and most (intent, context, per-language,
+structured validity, ambiguous/unknown) match or slightly exceed it.
+397 of 6,785 test examples were misclassified by intent (5.85% failure
+rate); the full per-example failure list (text, language, expected vs.
+predicted intent/context/action) is in the saved report for future v4
+error analysis - see §29 of the original task brief's known confusion
+pairs (`MESSAGE_FOR_USER` vs `SCHEDULE_REQUEST`, etc.), several of which
+appear directly in this run's failures.
+
+**How it was run:** CPU-only, unbatched (`LocalWOWModelProvider.generate()`
+issues one forward pass per head per example, ~9.4 examples/sec on this
+machine - 6,785 examples would take ~12 minutes as a single process,
+longer than this environment's per-command execution budget allows). Split
+into 4 sequential chunks via a temporary internal helper script
+(`training/evaluation/_predict_chunk.py`, deleted after use - not part of
+the permanent toolkit, purely a workaround for this session's execution
+constraints), verified as a complete, gap-free, duplicate-free 0..6784
+index range before scoring, then scored with `evaluate.py`'s real,
+unmodified `_score`/`_valid_structured_output` functions - the same
+methodology a single uninterrupted run would have used, not a different
+one.
+
+**Command for a future single-process rerun** (e.g. once running on a
+machine/GPU without this session's execution-time constraints, or to
+reproduce/spot-check this result):
+
+```
+python -m training.evaluation.evaluate \
+    --config training/configs/model_config_v3.yaml \
+    --model-dir v3=training/models/wow-brain/v3 \
+    --split test \
+    --output training/evaluation/v3_test_report.json
+```
+
+`evaluate.py` gained `--config` and `--split` this round (previously
+hardcoded to v0's config and `val.jsonl` only) - see the module's
+docstring. New tests:
+`training/tests/test_evaluate_split_selection.py` (file-selection/wiring
+only, no real model needed - split defaults to `val` unchanged,
+`--split test` reads `test.jsonl` and never touches `val.jsonl`/
+`train.jsonl`, invalid split raises, dataset-version detection reuses
+`training.training.train._read_dataset_version` instead of the old,
+v3-incompatible standalone copy this file used to have). Full report:
+`training/evaluation/v3_test_report.json` (committed - real diagnostic
+value for future v4 work, not a routine regenerable artifact like
+`latest_report.json`).
+
+**Still not promoted to default** - see §7/§8.
+
+## 5. Test results (backend + training)
 
 ```
 backend/tests/    151 passed, 8 skipped (skipped tests require a live TEST_DATABASE_URL -
@@ -213,10 +285,12 @@ backend/tests/    151 passed, 8 skipped (skipped tests require a live TEST_DATAB
                    tests were reviewed against the same working query patterns already
                    proven by the pre-existing DB-integration tests in the same file, but
                    were not run live)
-training/tests/   249 passed (training/training/train.py's RNG-restore fix, commit a9a0a50,
-                   is covered by these - re-run and confirmed passing after the change;
-                   the fix itself was validated for real by the actual Kaggle GPU resume
-                   it was written to unblock, not just by these pre-existing unit tests)
+training/tests/   254 passed (249 + 5 new, training/tests/test_evaluate_split_selection.py,
+                   covering evaluate.py's --split/--config support added in §4b. Also
+                   covers training/training/train.py's RNG-restore fix, commit a9a0a50 -
+                   re-run and confirmed passing; that fix itself was validated for real
+                   by the actual Kaggle GPU resume it was written to unblock, not just
+                   by these pre-existing unit tests)
 ```
 
 Every new module has both non-DB unit tests (fakes/in-memory doubles, no
@@ -252,13 +326,19 @@ documented gap, not a hidden one.
 
 ## 8. Next recommended step
 
-v3 training is done (§4) - the remaining leverage is elsewhere. In order:
-(1) run `training/evaluation/evaluate.py` (or a small adapted version
-pointed at `test.jsonl` instead of `val.jsonl`) against v3 to get a real
-held-out number before promoting it to default, and decide whether to
-switch the default `MODEL_PROVIDER` from `rule_based` to `local_wow` once
-that's done; (2) add tools + policy coverage for `SET_CONTEXT` (would need
-a `ContextProfile` write path) so more of the taxonomy is actually
+v3 training is done and now has a genuine held-out test-set number (§4b:
+94.15%/90.86%/95.30% intent/context/action, 100% structured validity) -
+the remaining leverage is elsewhere. In order:
+(1) **decide** whether to switch the default `MODEL_PROVIDER` from
+`rule_based` to `local_wow` - the numbers clear the "matches or exceeds
+the rule-based baseline" bar the codebase already checks for
+automatically (`evaluate.py`'s own `RESULT:` line), so this is now a
+product decision, not a missing-data blocker; if intent's known
+last-epoch-vs-best-epoch gap (§4's caveat, 0.27pp) matters, recover the
+true best-epoch weights from
+`training/models/wow-brain/v3_pre_kaggle_backup/intent/checkpoint_best.pt`
+first; (2) add tools + policy coverage for `SET_CONTEXT` (would need a
+`ContextProfile` write path) so more of the taxonomy is actually
 executable, not just reported; (3) begin real STT integration (e.g.
 faster-whisper) behind the existing `SpeechToTextProvider` interface,
 since that is the actual blocker to a real (not simulated) call.
