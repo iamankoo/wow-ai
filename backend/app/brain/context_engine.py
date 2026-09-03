@@ -17,6 +17,15 @@ from app.models.contact import Contact
 from app.models.context import ContextProfile
 
 
+def _try_parse_uuid(value: str) -> uuid.UUID | None:
+    """A malformed user_id is unknown-caller/unknown-user territory for a
+    read lookup, not a 500 - resolves to "no contact/profile found"."""
+    try:
+        return uuid.UUID(str(value))
+    except ValueError:
+        return None
+
+
 class DefaultContextEngine(ContextEngine):
     def __init__(self, session: AsyncSession, memory_store: MemoryStore):
         self._session = session
@@ -64,8 +73,11 @@ class DefaultContextEngine(ContextEngine):
     ) -> Contact | None:
         if not caller_number:
             return None
+        user_uuid = _try_parse_uuid(user_id)
+        if user_uuid is None:
+            return None
         stmt = select(Contact).where(
-            Contact.user_id == uuid.UUID(str(user_id)),
+            Contact.user_id == user_uuid,
             Contact.phone_number == caller_number,
         )
         result = await self._session.execute(stmt)
@@ -74,8 +86,11 @@ class DefaultContextEngine(ContextEngine):
     async def _find_active_profile(
         self, user_id: str, contact_id: uuid.UUID | None
     ) -> ContextProfile | None:
+        user_uuid = _try_parse_uuid(user_id)
+        if user_uuid is None:
+            return None
         stmt = select(ContextProfile).where(
-            ContextProfile.user_id == uuid.UUID(str(user_id)),
+            ContextProfile.user_id == user_uuid,
             ContextProfile.is_active.is_(True),
         )
         if contact_id is not None:

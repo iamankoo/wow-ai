@@ -39,3 +39,11 @@ android {
 flutter {
     source = "../.."
 }
+
+dependencies {
+    // Phase 2 Block 6: androidx.core.app.ActivityCompat / androidx.core.content.ContextCompat
+    // used by MainActivity's runtime permission requests and
+    // CallStateObserver's permission check - standard, foundational
+    // AndroidX support library, not an unrelated addition.
+    implementation("androidx.core:core-ktx:1.13.1")
+}

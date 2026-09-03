@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Phase 2 Block 6: WowCallScreeningService talks to the local WOW backend
+  over plain HTTP (see BACKEND_BASE_URL in WowCallScreeningService.kt,
+  matching kDefaultBackendBaseUrl in mobile/lib/main.dart). Android blocks
+  cleartext traffic for platform networking APIs (HttpURLConnection) by
+  default on API 28+; Flutter's own Dart-level networking is unaffected
+  (its own TLS stack, not subject to this policy), which is why only the
+  native Kotlin call-screening path needed this. Scoped to 10.0.2.2 only -
+  the Android emulator's fixed alias for the host machine's localhost, not
+  a real production endpoint - so no other cleartext traffic is permitted.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">10.0.2.2</domain>
+    </domain-config>
+</network-security-config>

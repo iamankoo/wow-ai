@@ -58,7 +58,15 @@ class PgVectorMemoryStore(MemoryStore):
         memory_type: MemoryType | None = None,
         include_deleted: bool = False,
     ) -> list[MemoryRecord]:
-        stmt = select(Memory).where(Memory.user_id == uuid.UUID(str(user_id)))
+        try:
+            user_uuid = uuid.UUID(str(user_id))
+        except ValueError:
+            # Matches app/brain/context_engine.py's _try_parse_uuid: this is
+            # called unconditionally on every build_context(), so a
+            # malformed user_id must resolve to "no memories found" rather
+            # than a 500.
+            return []
+        stmt = select(Memory).where(Memory.user_id == user_uuid)
         if not include_deleted:
             stmt = stmt.where(Memory.deleted_at.is_(None))
         if memory_type is not None:

@@ -2,6 +2,14 @@ import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
 
+/// Backend user_id columns are UUID (no real account system exists yet -
+/// Phase 1) - this fixed UUID is the Phase 1/2 stand-in for "the current
+/// device's user" until real accounts exist. Shared with
+/// mobile/android/.../WowCallScreeningService.kt's DEMO_USER_ID so the
+/// Flutter UI and the native call-screening path resolve to the same
+/// backend user.
+const String kDemoUserId = '00000000-0000-0000-0000-000000000001';
+
 /// Minimal Phase 1 screen: confirms connectivity to the WOW AI backend and
 /// lets you send a text command to the brain to see the structured action
 /// come back. Real call handling / streaming UI lands in Phase 2.
@@ -31,7 +39,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _sendCommand() async {
     try {
       final result = await widget.apiClient.sendBrainCommand(
-        userId: 'demo-user',
+        userId: kDemoUserId,
         text: _controller.text,
       );
       setState(() => _lastResult = result.toString());
