@@ -20,13 +20,15 @@ implementations (as this module's own integration test does) or the
 Phase 1 simulators, with zero change to this module.
 """
 
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from dataclasses import dataclass
 
 from app.interfaces.agent_runtime import AgentAction, AgentRuntime
 from app.interfaces.stt import SpeechToTextProvider
 from app.interfaces.tts import TextToSpeechProvider
 from app.interfaces.vad import VoiceActivityDetector, VoiceActivityEvent
+
+VoiceResolver = Callable[[str], Awaitable[str | None]]
 
 
 @dataclass
@@ -50,6 +52,7 @@ class MediaPipeline:
         sample_rate: int = 16000,
         frame_duration_ms: int = 30,
         tts_voice: str | None = None,
+        voice_resolver: VoiceResolver | None = None,
     ):
         self._vad = vad
         self._stt = stt
@@ -58,6 +61,12 @@ class MediaPipeline:
         self._sample_rate = sample_rate
         self._frame_duration_ms = frame_duration_ms
         self._tts_voice = tts_voice
+        # Phase 6 Part F: when set, resolves the real Piper voice for this
+        # specific user's real preferred_language/voice_gender (see
+        # app.media.voice_selection) on every turn - takes priority over
+        # the fixed `tts_voice` default, since that default applies the
+        # same voice to every caller regardless of who they are.
+        self._voice_resolver = voice_resolver
 
     async def process_call_audio(
         self,
@@ -129,19 +138,25 @@ class MediaPipeline:
             caller_number=caller_number,
         )
 
+        voice = self._tts_voice
+        if self._voice_resolver is not None:
+            resolved = await self._voice_resolver(user_id)
+            if resolved:
+                voice = resolved
+
         reply_text = (action.payload or {}).get("reply") or ""
         reply_audio = b""
         if reply_text.strip():
-            reply_audio = await self._tts.synthesize(reply_text, voice=self._tts_voice)
+            reply_audio = await self._tts.synthesize(reply_text, voice=voice)
 
         return PipelineTurn(
             transcript=transcription.text,
             agent_action=action,
             reply_audio=reply_audio,
-            reply_sample_rate=await self._resolve_tts_sample_rate(),
+            reply_sample_rate=await self._resolve_tts_sample_rate(voice),
         )
 
-    async def _resolve_tts_sample_rate(self) -> int:
+    async def _resolve_tts_sample_rate(self, voice: str | None) -> int:
         # get_sample_rate() is an additive convenience some real providers
         # (e.g. LocalPiperTTSProvider) expose beyond the TextToSpeechProvider
         # ABC, since the interface's synthesize() returns raw bytes with no
@@ -149,7 +164,7 @@ class MediaPipeline:
         get_sample_rate = getattr(self._tts, "get_sample_rate", None)
         if get_sample_rate is None:
             return self._sample_rate
-        return await get_sample_rate(voice=self._tts_voice)
+        return await get_sample_rate(voice=voice)
 
 
 async def _as_async_iter(
