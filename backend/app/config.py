@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     # matches the ~15 day retention originally designed for call data.
     call_retention_days: int = 15
 
+    # Phase 6 Part C - mobile/email verification. No real SMS/email vendor
+    # is wired in this repository yet (see
+    # app/providers/otp/logging_provider.py); while that's true, the
+    # generated code is echoed back in the request-code API response so the
+    # real verify flow stays testable end to end. Set False the moment a
+    # real OtpDeliveryProvider (Twilio/SendGrid/etc.) is wired in.
+    otp_expose_dev_code: bool = True
+    otp_code_ttl_seconds: int = 600
+    otp_max_attempts: int = 5
+
 
 @lru_cache
 def get_settings() -> Settings:

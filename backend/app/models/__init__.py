@@ -13,7 +13,8 @@ from app.models.feedback import (
 from app.models.memory import Memory, MemoryStatus, MemoryType
 from app.models.summary import Summary
 from app.models.transcript import Speaker, TranscriptSegment
-from app.models.user import User
+from app.models.user import PreferredLanguage, User, VoiceGender
+from app.models.verification_code import VerificationChannel, VerificationCode
 
 __all__ = [
     "AgentState",
@@ -32,8 +33,12 @@ __all__ = [
     "Memory",
     "MemoryStatus",
     "MemoryType",
+    "PreferredLanguage",
     "Summary",
     "Speaker",
     "TranscriptSegment",
     "User",
+    "VerificationChannel",
+    "VerificationCode",
+    "VoiceGender",
 ]

@@ -16,6 +16,8 @@ from app.interfaces.llm import LanguageModelProvider
 from app.learning.feedback_repository import SqlFeedbackRepository
 from app.providers.llm.rule_based import RuleBasedLanguageModelProvider
 from app.providers.memory.pgvector_store import PgVectorMemoryStore
+from app.providers.otp.logging_provider import LoggingOtpDeliveryProvider
+from app.services.verification_service import VerificationService
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 
@@ -93,4 +95,24 @@ async def get_brain() -> AsyncGenerator[AgentRuntime, None]:
         await session.commit()
 
 
-__all__ = ["get_db", "get_brain", "build_llm_provider"]
+# Stateless, safe to share across requests - see app/interfaces/otp.py's
+# docstring for why this is the only OtpDeliveryProvider wired in today.
+_otp_delivery_provider = LoggingOtpDeliveryProvider()
+
+
+async def get_verification_service() -> AsyncGenerator[VerificationService, None]:
+    """FastAPI dependency: a request-scoped VerificationService wired to
+    its own DB session, committing on success - same shape as get_brain."""
+    settings = get_settings()
+    async with AsyncSessionLocal() as session:
+        yield VerificationService(
+            session,
+            _otp_delivery_provider,
+            code_ttl_seconds=settings.otp_code_ttl_seconds,
+            max_attempts=settings.otp_max_attempts,
+            expose_dev_code=settings.otp_expose_dev_code,
+        )
+        await session.commit()
+
+
+__all__ = ["get_db", "get_brain", "get_verification_service", "build_llm_provider"]
