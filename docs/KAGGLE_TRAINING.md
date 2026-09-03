@@ -1,26 +1,44 @@
 # Training WOW Brain v3 on Kaggle (cloud GPU)
 
-This document is the complete, step-by-step procedure for **continuing**
-WOW Brain v3's intent-head training on a Kaggle GPU notebook (2x NVIDIA
-Tesla T4). It is preparation and reference material only - it does not
-start any training run, and none of the commands below have been executed
-against Kaggle by anyone but you.
+**Update: v3 training completed successfully** using this exact procedure
+(notebook `iamankoo/notebook914fc30194`, GPU T4x2) - all three heads
+(intent/context/action) trained, verified (structurally, functionally,
+and via the actual `LocalWOWModelProvider` production class, both on
+Kaggle and after transfer to the local machine), and restored to
+`training/models/wow-brain/v3/`. Full account:
+`docs/implementation-status.md` §4. This document remains accurate as the
+procedure for a *future* resume/retrain (e.g. v4) - the two lessons below
+are what made the successful run different from the earlier failed one.
 
 > **Known failure mode - read before your next run.** A prior training
-> pass on this notebook (`iamankoo/notebook914fc30194`) reportedly
-> completed all three v3 heads and built a `wow-brain-v3-final.tar`
-> (~7.1GB), but the artifacts were **permanently lost**: the notebook's
-> session had `Persistence: No persistence` (Kaggle wipes `/kaggle/working`
-> on every session reset unless persistence is enabled or a version is
-> explicitly saved), and no "Save & Run All" / notebook version was ever
-> committed, and no output Dataset or Model was published as a backup. A
-> live-session recovery attempt (`kaggle.com/work/code` -> the notebook's
-> editor -> its Python console, `find /kaggle/working`) confirmed the
-> working directory now contains only `.virtual_documents` - see
+> pass on this same notebook reportedly completed all three v3 heads and
+> built a `wow-brain-v3-final.tar` (~7.1GB), but the artifacts were
+> **permanently lost**: the notebook's session had
+> `Persistence: No persistence` (Kaggle wipes `/kaggle/working` on every
+> session reset unless persistence is enabled or a version is explicitly
+> saved), and no "Save & Run All" / notebook version was ever committed,
+> and no output Dataset or Model was published as a backup. A live-session
+> recovery attempt (`kaggle.com/work/code` -> the notebook's editor -> its
+> Python console, `find /kaggle/working`) confirmed the working directory
+> then contained only `.virtual_documents` - see
 > `docs/implementation-status.md` §4 for the full recovery attempt log.
+> **The successful rerun set session persistence to "Variables and Files"
+> before training started**, and survived a mid-run container restart
+> completely intact as a direct result - proof the fix works, not just a
+> theory.
 >
-> **Do not repeat this.** Before ending any future Kaggle session that
-> produced trained artifacts, do at least one of:
+> A second issue surfaced on the successful rerun: resuming the
+> locally-trained intent checkpoint on Kaggle's GPU image raised
+> `TypeError: RNG state must be a torch.ByteTensor` (a torch/numpy version
+> mismatch between the checkpoint's origin and the resume environment).
+> Fixed in `training/training/train.py` (commit `a9a0a50`) - RNG state
+> restoration is now best-effort per generator, never fatal. Already in
+> this repo; nothing to do differently next time on this front.
+>
+> **For any future session that produces trained artifacts**, still do at
+> least one of the following before ending it (belt-and-suspenders - the
+> persistence setting alone isn't guaranteed to survive every possible
+> Kaggle-side failure mode):
 > - Set session persistence to **"Files only"** (or higher) in Session
 >   options, *before* training starts, so `/kaggle/working` survives a
 >   session reset, or

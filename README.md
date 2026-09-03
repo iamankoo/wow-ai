@@ -55,7 +55,7 @@ Let a phone owner delegate "answer this call for me" to an assistant that:
 | WOW Agent orchestrator: explicit conversation state, confidence-gated policy engine, controlled tool registry (`backend/app/agent/`) | **Implemented**, opt-in (`AGENT_RUNTIME=wow_agent`; not yet the default) |
 | Structured, PII-safe per-stage latency observability (`backend/app/observability/`) - `WowAgent` only | **Implemented** |
 | Live low-confidence predictions from `WowAgent` feed the active-learning review queue (`/feedback/review-queue`) | **Implemented** |
-| Self-trained classifier model (intent/context/action, 3 heads) - v0 through v3 | **Implemented** (v3 training in progress, see §8) |
+| Self-trained classifier model (intent/context/action, 3 heads) - v0 through v3 | **Implemented** (v3 training complete and verified, not yet the default - see §8) |
 | Postgres + pgvector memory store, per-user personalization | **Implemented** |
 | Memory safety: typed memories (episodic/semantic/contact/short-term), trust tiers (observed -> confirmed/user-approved), soft-delete (`/memories` API) | **Implemented** |
 | Self-learning feedback pipeline (consent -> privacy filter -> human approval -> retrain -> evaluate -> promote) | **Implemented**, fully offline/batched |
@@ -124,7 +124,7 @@ training/models/wow-brain/<version>/
 | v0 | `prajjwal1/bert-tiny` (~4.4M params) | Proved the training pipeline end-to-end on CPU in minutes. Never claimed production-quality - its English-only vocabulary had no meaningful Hindi representation. |
 | v1 | `distilbert-base-multilingual-cased` (~135M params, 119,547-token vocab) | Fixes the Hindi/Hinglish tokenization gap - verified directly by comparing tokenizer output on the same Hindi sentence (see `docs/MODEL_ARCHITECTURE.md`). Still CPU-practical. |
 | v2 | Same base model, trained on a 33K hand-annotated dataset | Revealed a real gap: zero `ANSWER_CALL` examples anywhere in that dataset. |
-| v3 | Same base model, trained on the 66K `v3.3.0-answer-call` dataset | Closes the `ANSWER_CALL` gap (30,000 added examples + 3,000 hard negatives). In progress - see §8. |
+| v3 | Same base model, trained on the 66K `v3.3.0-answer-call` dataset | Closes the `ANSWER_CALL` gap (30,000 added examples + 3,000 hard negatives). Training complete and verified, opt-in via `MODEL_PROVIDER=local_wow` - see §8. |
 
 Base model is a config value, not hardcoded (`training/configs/model_config*.yaml`)
 - swapping base models requires a new config file and a training run, no
@@ -200,44 +200,46 @@ filenames):
 `ANSWER_CALL` action examples: 30,000 (10,000 each: English / Hindi /
 Hinglish). Hard negatives: 3,000. Pre-existing (v2-era) examples: 33,000.
 
-**Intent head checkpoint — `training/models/wow-brain/v3/intent/checkpoint.pt`**
-(read directly from the checkpoint's own saved state, not inferred):
+**v3 training is complete and verified** (all three heads). A first Kaggle
+run's artifacts were lost to a session-persistence issue; the project
+owner had this repository resume training on Kaggle (2x Tesla T4) a
+second time, this time with persistence correctly configured. Full
+recovery/verification log: [`docs/implementation-status.md`](docs/implementation-status.md) §4.
+Held-out **validation** accuracy (the same split used for early-stopping
+during training - not yet re-checked against the frozen `test.jsonl`,
+see the caveat below):
 
-| Field | Value |
-|---|---|
-| Epochs completed | **14** of 20 configured |
-| Next epoch on resume | 15 |
-| Best validation accuracy | **94.54%** (epoch 10) |
-| Last completed epoch's validation accuracy | 93.99% (epoch 14) |
-| Early-stopping bad-epoch streak | 4 of 4 (patience) - next non-improving epoch would trigger early stop |
-| Model + optimizer state present | Yes (resume-capable) |
-| Trained on | CPU (this development machine has no CUDA GPU) |
+| Head | Best val_accuracy | Best epoch | Deployed model reflects |
+|---|---|---|---|
+| Intent | 94.54% | 10 | Last epoch (16): **94.27%** - see caveat |
+| Context | 91.62% | 10 | Best epoch (10): 91.62% |
+| Action | 95.61% | 8 | Best epoch (8): 95.61% |
 
-This checkpoint (14/20 epochs, intent only) is what's **actually present
-in this repository and locally loadable today** - `MODEL_PROVIDER=rule_based`
-is the default for exactly this reason.
+**Caveat:** the deployed Intent weights reflect the *last* trained epoch,
+not the *best* one (0.27 percentage-point gap) - the original
+`checkpoint_best.pt` wasn't part of the Kaggle input dataset, so the
+resume couldn't seed "best-so-far" state for that head specifically. Not
+fixed yet; the true best-epoch weights exist locally in
+`training/models/wow-brain/v3_pre_kaggle_backup/` if ever needed. Full
+detail in `docs/implementation-status.md` §4.
 
-**Reported Kaggle run, artifacts unrecoverable.** Separately, the project
-owner reports that all three v3 heads were subsequently trained/resumed
-on Kaggle (2x Tesla T4) and reached held-out test accuracy of 93.66%
-(Intent) / 89.62% (Context) / 95.49% (Action), 100% structured-output
-validity, and 96.00% ambiguous/unknown accuracy on the 6,785-example test
-split - and that a `wow-brain-v3-final.tar` (~7.1GB) containing all three
-heads plus evaluation reports was built and verified before that Kaggle
-session ended. A live-session recovery attempt confirmed those artifacts
-are **not recoverable**: the session had persistence disabled, no
-notebook version was ever saved, and no backup dataset/model was
-published - `/kaggle/working` now contains only `.virtual_documents`. See
-[`docs/implementation-status.md`](docs/implementation-status.md) §4 for
-the full recovery attempt log, and the callout at the top of
-[`docs/KAGGLE_TRAINING.md`](docs/KAGGLE_TRAINING.md) for what to do
-differently next time. These reported numbers describe what the training
-run is said to have achieved, not something this repository can currently
-load, run, or independently re-verify - treat them as history to inform a
-future restoration, not as the state of the live model.
+**Verified for real, not assumed:** every file's size matched byte-for-byte
+between the Kaggle session and the local copy after transfer; each head
+independently loads via `transformers` and produces a forward pass of the
+correct shape; and the actual production class,
+`LocalWOWModelProvider` (`backend/app/providers/llm/local_wow.py`), was
+run **locally** (CPU, no GPU, no external API) against `training/models/wow-brain/v3/`
+and correctly classified both an English and a Hinglish test utterance
+(`"Main so raha hoon, please handle karo"` → `context_mode=SLEEPING`).
 
-Full cloud-training procedure (for a future restoration attempt, resuming
-from the still-present 14-epoch intent checkpoint):
+**Still not the default** - `MODEL_PROVIDER=rule_based` remains the
+default provider; `local_wow` is opt-in
+(`MODEL_PROVIDER=local_wow` in `.env`) until a held-out `test.jsonl` run
+(not yet performed - see `docs/implementation-status.md` §8) confirms the
+model before promoting it.
+
+Full cloud-training procedure, including the persistence-loss lesson and
+the RNG-restore fix this run needed:
 [`docs/KAGGLE_TRAINING.md`](docs/KAGGLE_TRAINING.md).
 
 ## 9. Self-learning / continuous-learning architecture
@@ -425,9 +427,11 @@ wow-ai/
 
 ## 19. Roadmap / next steps
 
-- Finish v3 training on cloud GPU (Kaggle T4x2) and evaluate against v1/v2.
+- Run `training/evaluation/evaluate.py` (or an adapted version) against
+  v3 on the frozen `test.jsonl` split (only validation accuracy is
+  verified so far - see §8) and compare against v1/v2.
 - Promote `LocalWOWModelProvider` to the default production provider once
-  v3 clears the evaluation gate.
+  v3 clears that held-out evaluation gate.
 - Real Android `CallScreeningService`/`InCallService` integration.
 - Self-hosted streaming ASR (e.g. faster-whisper) and TTS (e.g.
   Piper/Coqui) implementations of the existing contract-only interfaces.

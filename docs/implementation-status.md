@@ -70,82 +70,140 @@ Stated plainly, matching README §18:
   (MESSAGE_FOR_USER vs SCHEDULE_REQUEST, etc.) are documented but no v4
   candidate data collection has begun.
 
-## 4. Model artifact status - v3 artifact recovery attempt (verified against the actual local repo and the actual Kaggle account, not assumed)
+## 4. Model artifact status - v3 RECOVERED: retrained on Kaggle, verified, and restored locally
 
-**Local repo, as of this round:** `training/models/wow-brain/v3/` contains
-**only an `intent/` head**, checkpointed at **14 of 20 configured epochs**
-(best val accuracy 94.54% at epoch 10). There is no `context/` or
-`action/` head for v3, and no `metadata.json`, so `LocalWOWModelProvider`
-cannot currently load v3 - `MODEL_PROVIDER=rule_based` remains the default
-for exactly this reason.
+**Timeline, in order:**
 
-**Reported training history:** the project owner reports that WOW Brain
-v3's Intent head was resumed and Context/Action were trained from scratch
-on Kaggle (2x Tesla T4), reaching held-out test accuracy of 93.66%
-(Intent) / 89.62% (Context) / 95.49% (Action) on the 66,000-example
-`v3.3.0-answer-call` test set, and that a `wow-brain-v3-final.tar`
-(~7.1GB, all three heads + evaluation reports) was created and verified
-before the Kaggle session ended.
+1. **Original artifact loss (documented in prior revisions of this file):**
+   an earlier Kaggle training pass (all three heads, reportedly reaching
+   ~93.66%/89.62%/95.49% intent/context/action test accuracy) was lost -
+   the session had `Persistence: No persistence`, no notebook version was
+   ever saved, and no backup dataset/model was published. A thorough
+   recovery attempt (`kaggle.com/work/code`, the notebook's live console,
+   `kaggle.com/work/datasets`, `kaggle.com/work/models`) confirmed nothing
+   was recoverable - see git history for the full attempt log this section
+   used to contain.
+2. **Retraining, this round, on the user's explicit instruction ("start
+   the training"):** using the same notebook
+   (`iamankoo/notebook914fc30194`), the same input datasets
+   (`wow-ai-v3-3-0-answer-call`, `wow-ai-v3-intent-checkpoint`), and the
+   same procedure `docs/KAGGLE_TRAINING.md` documents, `training.training.train
+   --config training/configs/model_config_v3.yaml --resume` was launched
+   on GPU T4x2 - this time with session **persistence set to "Variables
+   and Files"** before starting (the fix for the original loss mode), and
+   the process launched as a detached background job
+   (`subprocess.Popen(..., start_new_session=True)`) so it would survive
+   any frontend disconnect.
+3. **A real bug surfaced and was fixed mid-run:** resuming the local
+   14-epoch intent checkpoint on Kaggle's GPU image raised
+   `TypeError: RNG state must be a torch.ByteTensor` in
+   `torch.set_rng_state` - a torch/numpy version mismatch between the
+   checkpoint's origin (local CPU) and the resume environment (Kaggle
+   GPU). Fixed in `training/training/train.py` (commit `a9a0a50`): each of
+   the three RNG restores (python/numpy/torch) is now independently
+   best-effort - a restore failure logs a warning and continues with a
+   fresh RNG state for that generator, rather than aborting the whole
+   resume and losing the real progress (model weights, optimizer state,
+   epoch history). Pulled onto Kaggle (`git pull`) and training
+   re-launched; ran to completion after that.
+4. **One session interruption occurred mid-run** (Kaggle's frontend
+   showed "Session is starting... / Starting container" partway through
+   Context training) - this turned out to be a container restart that
+   killed the in-progress process. Because persistence was now set to
+   "Variables and Files", **the cloned repo, the dataset, and every
+   epoch-level checkpoint already written survived the restart** - the
+   only real loss was the one in-progress (uncompleted) epoch. Training
+   was relaunched with `--resume` and picked up correctly per head
+   (`[intent] resuming from checkpoint: epoch 16`,
+   `[context] resuming from checkpoint: epoch 10`) - full detail was
+   visible in session logs at the time; this file records the outcome.
+5. **All three heads finished naturally via early stopping** (patience 4,
+   `training/configs/model_config_v3.yaml`):
 
-**Recovery attempt performed this round (via the Kaggle web UI, logged
-in as `iamankoo`):**
+   | Head | Best val_accuracy | Best epoch | Final saved model reflects |
+   |---|---|---|---|
+   | Intent | 94.54% (original, epoch 10) | 10 | **Last** epoch (16), 94.27% - see caveat below |
+   | Context | 91.62% | 10 | Best epoch (10), 91.62% |
+   | Action | 95.61% | 8 | Best epoch (8), 95.61% |
 
-1. `kaggle.com/work/code` -> exactly one notebook exists:
-   `iamankoo/notebook914fc30194`. Opened it.
-2. The notebook's read-only view reports **"No saved version"** - the
-   author never ran "Save & Run All"/committed a version, so there is no
-   persisted Output tab to pull artifacts from via `kaggle kernels output`.
-3. Reconnected to the notebook's **live editor session** (a fresh, ~10-
-   minute-old "Draft Session", GPU T4x2 selected as accelerator, input
-   datasets `wow-ai-v3-3-0-answer-call` and `wow-ai-v3-intent-checkpoint`
-   correctly attached - confirming this is the right notebook). Session
-   options show **`Persistence: No persistence`** - on Kaggle this means
-   `/kaggle/working` is wiped every time the interactive session resets;
-   nothing survives across sessions unless a version is saved or files are
-   explicitly exported.
-4. Ran a live command in the session's Python console:
-   `find /kaggle/working -maxdepth 6`. Output:
-   ```
-   /kaggle/working
-   /kaggle/working/.virtual_documents
-   /kaggle/working/.virtual_documents/__notebook_source__.ipynb
-   ```
-   No `training/` directory, no model files - matching the project
-   owner's own report of what the current session shows. The Output panel
-   independently corroborates this: **112KiB** total (not the multi-GB the
-   trained artifacts would occupy).
-5. Checked `kaggle.com/work/datasets` for a backup: only the same **two
-   input** datasets exist (`wow-ai-v3-intent-checkpoint`, 833MB - the
-   pre-training 14-epoch checkpoint; `wow-ai-v3-3-0-answer-call`, 4MB - the
-   dataset manifests) - no output dataset was ever published from the
-   completed run.
-6. Checked `kaggle.com/work/models` (Kaggle's separate Models feature):
-   **no models published.**
+   **Caveat, stated plainly:** Intent's final saved `model.safetensors`
+   reflects its *last* trained epoch (16, 94.27% val accuracy), not its
+   *best* epoch (10, 94.54%) - a 0.27 percentage point gap. This happened
+   because `train.py`'s resume logic recovers "best so far" weights from
+   `checkpoint_best.pt`, and only `checkpoint.pt` (not `checkpoint_best.pt`)
+   was part of the originally-uploaded `wow-ai-v3-intent-checkpoint`
+   Kaggle dataset, so there was nothing to seed `best_state` with when
+   epoch 16 didn't beat epoch 10. The true epoch-10 weights **do** exist
+   locally, in `training/models/wow-brain/v3_pre_kaggle_backup/intent/checkpoint_best.pt`
+   (preserved, not deleted, when the new artifacts were swapped in) -
+   recovering them would need a small script to load that checkpoint and
+   re-export via `model.save_pretrained`/`tokenizer.save_pretrained`; not
+   done this round since the gap is minor and this file must stay honest
+   about what was actually verified, not what could additionally be done.
 
-**Conclusion: the trained v3 artifacts (Context/Action heads, the
-finished Intent head, and the `wow-brain-v3-final.tar` archive) are not
-recoverable from any avenue available in this environment.** They existed
-only on the ephemeral disk of an interactive Kaggle session with
-persistence disabled, and were never checkpointed to a durable Kaggle
-artifact (a saved notebook version, an output dataset, or a published
-model) before that session was reset. This is not a "couldn't find it"
-result - it is a definitive "the only remaining record of that session is
-this empty working directory," confirmed directly against the live
-Kaggle session, not inferred.
+6. **Verified on Kaggle** (still on the live GPU session, immediately
+   after training): every expected file exists with the right size
+   (`metadata.json` 11,013 bytes; each head's `model.safetensors`
+   ~541.3-541.4MB, `tokenizer.json` 2,919,625 bytes, small `config.json`/
+   `tokenizer_config.json`); `metadata.json` correctly reports
+   `model_version: v3`, `dataset_version: v3.3.0-answer-call`,
+   `base_model: distilbert-base-multilingual-cased`, and each head's exact
+   label count (intent=17, context=7, action=13, matching
+   `backend/app/brain/taxonomy.py` exactly); each head was independently
+   loaded via `transformers.AutoModelForSequenceClassification`/
+   `AutoTokenizer` and ran a real forward pass with the correct output
+   shape (`[1, 17]`/`[1, 7]`/`[1, 13]`). Finally, the **actual production
+   class** - `backend.app.providers.llm.local_wow.LocalWOWModelProvider`,
+   the same code `MODEL_PROVIDER=local_wow` uses in the real backend - was
+   instantiated against the trained `v3/` directory and asked to classify
+   "Please handle my calls, I am in a meeting": it returned
+   `context_mode=MEETING`, `action=SET_CONTEXT`, with ~99.9% confidence on
+   every head, `provider=local_wow_v0`, `model_version=v3` - zero external
+   API calls.
+7. **Transferred to the local machine and re-verified there, independently:**
+   the deployable artifacts (all `config.json`/`model.safetensors`/
+   `tokenizer.json`/`tokenizer_config.json` for all three heads, plus
+   `metadata.json` - 1,508,625,116 bytes as one `.tar.gz`, checkpoint
+   files excluded to keep the transfer small) were packaged on Kaggle and
+   downloaded via the notebook's `IPython.display.FileLink` mechanism.
+   **File sizes after extraction matched the Kaggle-side sizes exactly,
+   byte for byte**, for all 13 files. The old, incomplete local `v3/`
+   (intent-only, 14 epochs) was preserved at
+   `training/models/wow-brain/v3_pre_kaggle_backup/` rather than deleted,
+   and the new artifacts promoted to `training/models/wow-brain/v3/`.
+   `LocalWOWModelProvider` was then re-run **locally** (not on Kaggle) -
+   `backend/.venv`, CPU inference - against three test utterances in
+   English and Hinglish:
 
-**Per instruction, no retraining was performed.** The training *history*
-(hyperparameters, that it ran, the reported metrics) is treated as real
-and should inform a future v3 restoration, but the *artifacts* themselves
-must be produced again - there is nothing left to recover. If v3 is
-restored in the future, the most direct path is resuming
-`training/models/wow-brain/v3/intent/checkpoint.pt` (14 completed epochs,
-still present locally) exactly as `docs/KAGGLE_TRAINING.md` describes,
-this time **saving a Kaggle Dataset version of `training/models/wow-brain/v3/`
-before the session ends** (`docs/KAGGLE_TRAINING.md` step 12B already
-documents the command; it was not actually run for this training pass).
+   | Input | intent | context_mode | action |
+   |---|---|---|---|
+   | "Please handle my calls, I am in a meeting" | SET_CONTEXT | MEETING | SET_CONTEXT |
+   | "Main so raha hoon, please handle karo" (Hinglish) | SET_CONTEXT | SLEEPING | SET_CONTEXT |
+   | "Can you tell him I called about the invoice?" | GET_CONTEXT | MEETING | NO_ACTION |
 
-`docs/KAGGLE_TRAINING.md` has been updated with an explicit warning about
-this exact failure mode for future runs.
+   All three loaded and ran correctly locally, with no GPU and no
+   external API - confirming the artifacts are genuinely portable, not
+   an artifact of the Kaggle environment.
+
+**What this section does NOT claim:** these are **validation-set**
+accuracies (the same `val.jsonl` split used for early-stopping decisions
+during training), not a fresh run of `training/evaluation/evaluate.py`
+against the frozen, never-touched `test.jsonl` (6,785 examples). That
+held-out test run was not performed this round (to respect the explicit
+instruction to finish, verify, and stop rather than keep running GPU
+jobs) - it is the natural next step before treating these numbers as
+final. Checkpoint files (`checkpoint.pt`/`checkpoint_best.pt`, needed only
+for future resume/retraining, not for inference) were not brought down
+this round either, to keep the transfer small. With session persistence
+now set to "Variables and Files" (unlike the original run), they should
+still be present under `/kaggle/working/wow-ai/training/models/wow-brain/v3/`
+the next time that Kaggle session is started, even though the session
+itself was stopped (via Kaggle's "Stop session" control) at the end of
+this round to free the GPU, per instruction.
+
+`docs/KAGGLE_TRAINING.md` carries a top-of-file warning about the
+original persistence failure mode, plus the RNG-restore fix, so a future
+training pass doesn't repeat either issue.
 
 ## 5. Test results (this round, backend)
 
@@ -155,7 +213,10 @@ backend/tests/    151 passed, 8 skipped (skipped tests require a live TEST_DATAB
                    tests were reviewed against the same working query patterns already
                    proven by the pre-existing DB-integration tests in the same file, but
                    were not run live)
-training/tests/   249 passed (unaffected by this round - no training/ code was changed)
+training/tests/   249 passed (training/training/train.py's RNG-restore fix, commit a9a0a50,
+                   is covered by these - re-run and confirmed passing after the change;
+                   the fix itself was validated for real by the actual Kaggle GPU resume
+                   it was written to unblock, not just by these pre-existing unit tests)
 ```
 
 Every new module has both non-DB unit tests (fakes/in-memory doubles, no
@@ -181,16 +242,23 @@ with the existing single-tenant-personal-use design.
 ## 7. Known limitations (repeated from README, kept in sync)
 
 Do not treat anything in section 3 above as done. In particular: this
-system cannot yet answer a real phone call, does not yet default to its
-own trained model, and has no automated retention/cleanup for call data.
+system cannot yet answer a real phone call, **still does not default to
+its own trained model** (`MODEL_PROVIDER=rule_based` remains the default;
+v3 is complete and verified but only loads when `MODEL_PROVIDER=local_wow`
+is explicitly set - see §4), and has no automated retention/cleanup for
+call data. Intent's deployed weights reflect its last trained epoch
+rather than its best epoch (94.27% vs. 94.54%, see §4's caveat) - a minor,
+documented gap, not a hidden one.
 
 ## 8. Next recommended step
 
-In order of leverage: (1) decide whether to resume v3 training on a real
-GPU (the artifacts and procedure are ready, see `docs/KAGGLE_TRAINING.md`)
-or continue building agent capability against `rule_based`/`local_wow` v0/v1;
-(2) add tools + policy coverage for `SET_CONTEXT` (would need a
-`ContextProfile` write path) so more of the taxonomy is actually
+v3 training is done (§4) - the remaining leverage is elsewhere. In order:
+(1) run `training/evaluation/evaluate.py` (or a small adapted version
+pointed at `test.jsonl` instead of `val.jsonl`) against v3 to get a real
+held-out number before promoting it to default, and decide whether to
+switch the default `MODEL_PROVIDER` from `rule_based` to `local_wow` once
+that's done; (2) add tools + policy coverage for `SET_CONTEXT` (would need
+a `ContextProfile` write path) so more of the taxonomy is actually
 executable, not just reported; (3) begin real STT integration (e.g.
 faster-whisper) behind the existing `SpeechToTextProvider` interface,
 since that is the actual blocker to a real (not simulated) call.
