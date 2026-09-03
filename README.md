@@ -338,10 +338,10 @@ Two structurally separate systems, deliberately kept apart:
 ## 14. Testing
 
 ```
-backend/tests/    225 passed, 10 skipped (skipped tests require a live TEST_DATABASE_URL;
-                   includes 5 tests against the recovered WOW Brain v3 model and 11 tests
-                   against a real local faster-whisper STT model, both real when their
-                   optional artifacts/dependencies are present)
+backend/tests/    232 passed, 10 skipped (skipped tests require a live TEST_DATABASE_URL;
+                   includes real-model tests against the recovered WOW Brain v3, a real
+                   local faster-whisper STT model, and a real local Piper TTS model - all
+                   real when their optional artifacts/dependencies are present)
 training/tests/   254 passed
 ```
 

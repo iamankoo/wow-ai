@@ -637,3 +637,57 @@ matching the `TEST_DATABASE_URL`/v3-model-gated pattern used elsewhere.
 
 Tests after this block: **225 passed, 10 skipped** (was 214/10).
 `training/tests/`: unchanged. No regressions.
+
+### Block 3: real TTS (`LocalPiperTTSProvider`)
+
+Implements the pre-existing `TextToSpeechProvider` contract
+(`backend/app/interfaces/tts.py`, contract-only until now) using
+**Piper** (a fast, self-hosted ONNX-based neural TTS engine) - zero
+hosted TTS API. `SimulatedTTSProvider` is untouched and remains the
+deterministic test double.
+
+- `backend/app/providers/tts/local_piper.py`: lazy-imports `piper`
+  (same discipline as the STT/model providers); voices resolved by
+  Piper's own naming convention (`en_US-lessac-medium`,
+  `hi_IN-pratham-medium`, ...) and downloaded on first use via piper's
+  own `download_voice()` helper into `~/.cache/wow-ai/piper-voices/`
+  (outside the repo, never git-tracked, `auto_download` can be disabled
+  for environments that must pre-provision voices); each resolved
+  voice's `PiperVoice` is cached in memory after first load; raises
+  `TTSNotAvailableError` if piper is missing, a voice can't be
+  downloaded/loaded, or synthesis produces nothing - never a silent
+  fallback.
+- CPU-bound synthesis is offloaded via `asyncio.to_thread` so it never
+  blocks the event loop other in-flight requests share.
+- `stream_synthesize` genuinely streams: it pulls Piper's own
+  synchronous chunk generator one chunk at a time (each `next()` also
+  via `asyncio.to_thread`) rather than materializing the whole utterance
+  first, unlike STT's honestly-non-streaming `feed()` (Piper, unlike
+  Whisper, *can* produce audio incrementally, so streaming here is real,
+  not a documented limitation).
+- Added `get_sample_rate(voice=None)` - additive, not an ABC change
+  (`TextToSpeechProvider` has no field for it) - the media pipeline
+  (Block 5) needs this to interpret the raw PCM bytes `synthesize()`/
+  `stream_synthesize()` return, since the interface returns bytes with
+  no format metadata.
+
+**Real synthesis verified, not mocks**, including genuine multilingual
+proof (WOW's domain is English/Hindi/Hinglish): a representative WOW
+agent response ("Got it - I've taken care of that.") was synthesized
+with the real `en_US-lessac-medium` voice, written to an actual WAV file,
+and **reopened and re-validated as genuinely playable PCM audio**
+(correct channels/sample width/rate, >0.3s real duration - not
+near-silence); a second real voice, `hi_IN-pratham-medium`, synthesized a
+Hindi sentence and produced audibly different, non-empty output,
+proving voice switching resolves to a genuinely different model rather
+than relabeling cached bytes.
+
+7 new tests, all passing against real models:
+`backend/tests/test_local_piper_tts.py` - WAV-artifact validity,
+empty-text rejection (both `synthesize` and `stream_synthesize`), real
+streamed chunks, sample-rate reporting, real Hindi voice switching, and
+a missing-voice-without-auto-download failure path. Gated with
+`pytest.importorskip("piper")`.
+
+Tests after this block: **232 passed, 10 skipped** (was 225/10).
+`training/tests/`: unchanged. No regressions.
