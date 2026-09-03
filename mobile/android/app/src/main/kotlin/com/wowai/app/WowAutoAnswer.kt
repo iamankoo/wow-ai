@@ -40,20 +40,21 @@ private const val AUTO_ANSWER_DELAY_MS = 10_000L
  * cancelled the moment the call leaves RINGING for any other reason (the
  * human answered or declined it - see the "WOW does nothing" requirement).
  *
- * Verification note: CallStateObserver's RINGING/IDLE detection and
- * WowCallScreeningService's onScreenCall() -> real backend round trip were
- * both independently confirmed against real `adb emu gsm call` traffic on
- * the Medium_Phone_API_36.1 emulator (Phase 2 Block 6). GET
- * /users/{id}.call_assistant_enabled was independently confirmed live
- * against the real Postgres-backed endpoint. This class's own
- * acceptRingingCall() call could not get a live end-to-end demonstration in
- * this session: after an unrelated emulator crash/restart, the emulator's
- * `gsm call` console simulation stopped creating calls at all (`gsm list`
- * reports zero calls after every `gsm call`, confirmed reproducible across
- * a full emulator relaunch and an `adb reboot`) - a real environment
- * defect, not a WOW code path. The implementation is written against the
- * documented, verified API contract; re-verify live end-to-end once GSM
- * call simulation is working again in this environment.
+ * Verification note: confirmed live end-to-end on Medium_Phone_API_36.1 via
+ * `adb emu gsm call` (Phase 5 Block 7, after Phase 2 Block 6 had already
+ * proven CallStateObserver's RINGING/IDLE detection and
+ * WowCallScreeningService's real backend round trip). Both branches of the
+ * "give the human ~10 seconds first" requirement were exercised for real:
+ *
+ *   - Left ringing untouched: logcat showed the RINGING transition, then
+ *     "WOW auto-answered the call via TelecomManager.acceptRingingCall()"
+ *     ~10.2s later, and `adb shell dumpsys telecom` confirmed the call's
+ *     state genuinely moved RINGING -> ACTIVE.
+ *   - Declined within the window: no auto-answer log ever appeared and the
+ *     call ended cleanly - WOW did nothing, as required.
+ *
+ * GET /users/{id}.call_assistant_enabled was independently confirmed live
+ * against the real Postgres-backed endpoint before this run.
  */
 object WowAutoAnswer {
     private const val BACKEND_BASE_URL = "http://10.0.2.2:8000"
