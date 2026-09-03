@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
 import '../../core/constants.dart';
-import '../../core/local_prefs.dart';
+import '../../core/floating_button_controller.dart';
 import '../../core/wow_theme.dart';
 import '../history/history_screen.dart';
 import '../profile/profile_screen.dart';
@@ -78,7 +78,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _refreshState();
     _loadCallData();
-    WowLocalPrefs.getFloatingButtonEnabled()
+    FloatingButtonController.resync()
         .then((v) => mounted ? setState(() => _floatingButtonEnabled = v) : null);
     // Ticks the displayed countdown locally between real syncs, and
     // re-syncs with the real backend the moment the local countdown would
@@ -257,8 +257,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _setFloatingButtonEnabled(bool value) async {
-    setState(() => _floatingButtonEnabled = value);
-    await WowLocalPrefs.setFloatingButtonEnabled(value);
+    final actual = await FloatingButtonController.setEnabled(context, value);
+    if (mounted) setState(() => _floatingButtonEnabled = actual);
   }
 
   void _openSettings() {

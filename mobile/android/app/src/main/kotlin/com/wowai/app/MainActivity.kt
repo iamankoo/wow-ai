@@ -3,8 +3,10 @@ package com.wowai.app
 import android.app.role.RoleManager
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.util.Log
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -15,7 +17,9 @@ import io.flutter.plugin.common.MethodChannel
 private const val TAG = "WowMainActivity"
 private const val CALL_SCREENING_ROLE_REQUEST_CODE = 4001
 private const val PHONE_PERMISSIONS_REQUEST_CODE = 4002
+private const val OVERLAY_PERMISSION_REQUEST_CODE = 4003
 private const val PERMISSIONS_CHANNEL = "com.wowai.app/permissions"
+private const val OVERLAY_CHANNEL = "com.wowai.app/overlay"
 
 /**
  * Phase 2 Block 6 + Phase 6 Part D: real Android call integration and the
@@ -37,10 +41,18 @@ private const val PERMISSIONS_CHANNEL = "com.wowai.app/permissions"
  * Does not request the default-dialer role / implement InCallService -
  * CallScreeningService remains the lighter-weight, non-default-dialer path
  * this project uses (see WowCallScreeningService's class doc).
+ *
+ * Phase 6 Part H adds a second channel, OVERLAY_CHANNEL, for the real
+ * floating WOW button: `hasPermission`/`requestPermission` drive
+ * SYSTEM_ALERT_WINDOW (granted via Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+ * a settings screen, not a runtime dialog - hence its own
+ * startActivityForResult/onActivityResult path), and `start`/`stop` control
+ * WowFloatingButtonService, the actual overlay Window.
  */
 class MainActivity : FlutterActivity() {
     private var pendingPermissionsResult: MethodChannel.Result? = null
     private var pendingRoleResult: MethodChannel.Result? = null
+    private var pendingOverlayResult: MethodChannel.Result? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -60,6 +72,46 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, OVERLAY_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "hasPermission" -> result.success(Settings.canDrawOverlays(this))
+                    "requestPermission" -> requestOverlayPermission(result)
+                    "start" -> startFloatingButton(result)
+                    "stop" -> {
+                        stopService(Intent(this, WowFloatingButtonService::class.java))
+                        result.success(true)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun requestOverlayPermission(result: MethodChannel.Result) {
+        if (Settings.canDrawOverlays(this)) {
+            result.success(true)
+            return
+        }
+        if (pendingOverlayResult != null) {
+            result.error("BUSY", "An overlay permission request is already in progress", null)
+            return
+        }
+        pendingOverlayResult = result
+        Log.i(TAG, "Requesting SYSTEM_ALERT_WINDOW via settings screen")
+        val intent = Intent(
+            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+            Uri.parse("package:$packageName"),
+        )
+        startActivityForResult(intent, OVERLAY_PERMISSION_REQUEST_CODE)
+    }
+
+    private fun startFloatingButton(result: MethodChannel.Result) {
+        if (!Settings.canDrawOverlays(this)) {
+            result.error("NO_PERMISSION", "SYSTEM_ALERT_WINDOW is not granted", null)
+            return
+        }
+        startService(Intent(this, WowFloatingButtonService::class.java))
+        result.success(true)
     }
 
     private fun hasPermission(permission: String): Boolean =
@@ -146,6 +198,12 @@ class MainActivity : FlutterActivity() {
             Log.i(TAG, "CALL_SCREENING role request result: resultCode=$resultCode")
             pendingRoleResult?.success(currentStatus())
             pendingRoleResult = null
+        }
+        if (requestCode == OVERLAY_PERMISSION_REQUEST_CODE) {
+            val granted = Settings.canDrawOverlays(this)
+            Log.i(TAG, "Overlay permission request result: granted=$granted")
+            pendingOverlayResult?.success(granted)
+            pendingOverlayResult = null
         }
     }
 }

@@ -18,6 +18,11 @@
     <!-- Phase 6 Part J: real microphone capture for voice command / the
          initial personalization call - real STT input, not a stub. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Phase 6 Part H: the real floating WOW button - a live
+         TYPE_APPLICATION_OVERLAY Window (WowFloatingButtonService), not a
+         decorative toggle. Granted via the system's "display over other
+         apps" settings screen, not a runtime dialog. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
     <application
         android:label="WOW AI"
@@ -53,5 +58,9 @@
                 <action android:name="android.telecom.CallScreeningService" />
             </intent-filter>
         </service>
+
+        <service
+            android:name=".WowFloatingButtonService"
+            android:exported="false" />
     </application>
 </manifest>

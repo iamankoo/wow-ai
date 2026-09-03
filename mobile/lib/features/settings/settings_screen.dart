@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
-import '../../core/local_prefs.dart';
+import '../../core/floating_button_controller.dart';
 import '../../core/permissions_bridge.dart';
 import '../../core/wow_theme.dart';
 
@@ -34,7 +34,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   void initState() {
     super.initState();
-    WowLocalPrefs.getFloatingButtonEnabled()
+    FloatingButtonController.resync()
         .then((v) => mounted ? setState(() => _floatingButtonEnabled = v) : null);
     WowPermissionsBridge.status()
         .then((s) => mounted ? setState(() => _permissionStatus = s) : null);
@@ -65,8 +65,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _toggleFloatingButton(bool value) async {
-    setState(() => _floatingButtonEnabled = value);
-    await WowLocalPrefs.setFloatingButtonEnabled(value);
+    final actual = await FloatingButtonController.setEnabled(context, value);
+    if (mounted) setState(() => _floatingButtonEnabled = actual);
   }
 
   Widget _sectionLabel(String text) => Padding(
