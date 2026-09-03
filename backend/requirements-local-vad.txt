@@ -1,0 +1,11 @@
+# Dependency for real voice activity detection (backend/app/providers/vad/webrtc_vad.py).
+# Not required for text-only/simulated-audio development.
+#
+# webrtcvad-wheels is used instead of the original "webrtcvad" package because it ships
+# prebuilt wheels - the original requires a C++ build toolchain to compile from source
+# (Microsoft C++ Build Tools on Windows), which this project does not otherwise need.
+# Same underlying WebRTC VAD algorithm and Python API either way; if your environment
+# already has a C++ toolchain, plain "webrtcvad" is a drop-in alternative.
+#
+# Install with: pip install -r requirements.txt -r requirements-local-vad.txt
+webrtcvad-wheels>=2.0.14

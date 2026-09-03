@@ -691,3 +691,66 @@ a missing-voice-without-auto-download failure path. Gated with
 
 Tests after this block: **232 passed, 10 skipped** (was 225/10).
 `training/tests/`: unchanged. No regressions.
+
+### Block 4: real VAD / barge-in (`WebRtcVoiceActivityDetector`)
+
+Unlike STT/TTS/telephony, **no interface existed for this at all** -
+Phase 1's "turn detection" was a punctuation heuristic living inside
+`SimulatedSTTProvider`, explicitly documented there as a stand-in, never
+meant to survive into real audio. This block adds the missing interface
+(`backend/app/interfaces/vad.py`, following the exact same ABC pattern as
+`SpeechToTextProvider`/`TextToSpeechProvider`/`TelephonyProvider`) and a
+real implementation - **not left as the punctuation heuristic**, per
+instruction.
+
+- Engine: Google's **WebRTC VAD** - a genuine, deterministic
+  signal-processing classifier purpose-built for real-time voice-call
+  audio (this project's exact domain), not a fake/heuristic stand-in and
+  not a neural model requiring a download. Installed as
+  `webrtcvad-wheels` (prebuilt wheels; the original `webrtcvad` package
+  needs a C++ build toolchain this machine doesn't have - same
+  underlying algorithm/API either way, documented in
+  `requirements-local-vad.txt`).
+- `VadStreamSession` (per-call, stateful): `feed()` accepts **any chunk
+  size** (buffers internally to WebRTC's required fixed frame size -
+  10/20/30ms), `notify_playback_started`/`notify_playback_stopped` (so
+  the session can tell speech-starting-while-WOW-is-talking apart from
+  ordinary speech-start), `reset()` (clears speech/silence state for a
+  new turn, deliberately leaves the playback-active flag untouched -
+  that flag isn't part of the utterance state machine).
+- Events: `SPEECH_START`, `SPEECH_END`, `SILENCE` (sustained "dead air"
+  with no speech at all this turn - distinct from `SPEECH_END`, which is
+  a pause *after* speech), `BARGE_IN` (speech starting during active
+  playback). Debounced (2 frames/60ms to confirm speech genuinely
+  started, 10 frames/300ms to confirm a pause is really the end of turn)
+  so single noisy/silent frames can't flip state.
+- **A real bug found and fixed during testing**: the first `feed()`
+  implementation processed every complete frame in one call but only
+  returned the *last* event, silently dropping earlier ones whenever a
+  single call's buffer crossed more than one state transition (e.g. an
+  entire pre-recorded utterance fed as one chunk - the exact case the
+  first test run against the real fixture caught). Fixed by having
+  `feed()` stop and return as soon as one event occurs, leaving any
+  remaining already-buffered frames for the *next* `feed()` call -
+  matches how a real continuous audio stream would deliver events over
+  time, and no event is ever silently lost regardless of how a caller
+  chunks its input.
+
+**Verified against real speech, not synthetic tone/silence alone:** run
+directly against Block 2's real `meeting_context.wav` fixture (the same
+"I am in a meeting, please handle my calls." utterance, itself real
+recorded-equivalent speech, not silence) - correctly detects
+`SPEECH_START` at 0.12s (after the fixture's brief leading room-tone) and
+`SPEECH_END` at 3.15s of 3.535s total (after the trailing pause), with no
+audio content inspected beyond raw PCM frames.
+
+9 tests, all passing: `backend/tests/test_webrtc_vad.py` - real-fixture
+speech-start/end sequencing, arbitrary/ragged chunk-size delivery,
+sustained-silence single-event firing, barge-in detection (and its
+absence when playback was stopped first), `reset()`'s
+playback-flag-survives behavior, and sample-rate/frame-duration/
+aggressiveness validation. Gated with `pytest.importorskip("webrtcvad")`,
+matching the optional-dependency pattern used for STT/TTS.
+
+Tests after this block: **241 passed, 10 skipped** (was 232/10).
+`training/tests/`: unchanged. No regressions.
