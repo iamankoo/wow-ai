@@ -9,6 +9,7 @@ import '../../core/wow_theme.dart';
 import '../history/history_screen.dart';
 import '../profile/profile_screen.dart';
 import '../settings/settings_screen.dart';
+import 'voice_command_sheet.dart';
 
 class _Duration4Option {
   const _Duration4Option(this.label, this.icon, this.apiValue);
@@ -164,7 +165,18 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<void> _openCommandSheet({required bool voice}) async {
+  Future<void> _openVoiceCommandSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: WowColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetContext) => VoiceCommandSheet(apiClient: widget.apiClient, userId: kDemoUserId),
+    );
+  }
+
+  Future<void> _openTextCommandSheet() async {
     final controller = TextEditingController();
     await showModalBottomSheet<void>(
       context: context,
@@ -184,20 +196,18 @@ class _HomeScreenState extends State<HomeScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                voice ? 'Voice command' : 'Text command',
-                style: const TextStyle(
+              const Text(
+                'Text command',
+                style: TextStyle(
                   color: WowColors.textPrimary,
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(height: 4),
-              Text(
-                voice
-                    ? 'Real on-device speech capture is not wired into this app yet - type what you would say instead.'
-                    : 'Say something to WOW AI',
-                style: const TextStyle(color: WowColors.textMuted, fontSize: 13),
+              const Text(
+                'Say something to WOW AI',
+                style: TextStyle(color: WowColors.textMuted, fontSize: 13),
               ),
               const SizedBox(height: 16),
               TextField(
@@ -597,14 +607,14 @@ class _HomeScreenState extends State<HomeScreen> {
           color: WowColors.primaryBlue,
           title: 'Voice',
           subtitle: 'Talk to WOW',
-          onTap: () => _openCommandSheet(voice: true),
+          onTap: _openVoiceCommandSheet,
         ),
         tile(
           icon: Icons.keyboard_alt_outlined,
           color: WowColors.primaryBlue,
           title: 'Text',
           subtitle: 'Type a command',
-          onTap: () => _openCommandSheet(voice: false),
+          onTap: _openTextCommandSheet,
         ),
         tile(
           icon: Icons.fiber_manual_record,
@@ -822,7 +832,7 @@ class _HomeScreenState extends State<HomeScreen> {
             navItem(Icons.history, 'History', onTap: _openHistory),
             Expanded(
               child: GestureDetector(
-                onTap: () => _openCommandSheet(voice: true),
+                onTap: _openVoiceCommandSheet,
                 child: Container(
                   width: 52,
                   height: 52,

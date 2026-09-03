@@ -176,3 +176,22 @@ async def _as_async_iter(
         return
     for item in source:  # type: ignore[union-attr]
         yield item
+
+
+def chunk_pcm16(
+    audio: bytes, *, sample_rate: int, frame_duration_ms: int = 30
+) -> Iterable[bytes]:
+    """Splits one complete raw-PCM16-mono buffer into frame-sized chunks
+    for MediaPipeline.process_call_audio's `audio_chunks`. Required, not
+    optional, for a caller handing over one whole pre-recorded utterance
+    (e.g. the real voice-command HTTP endpoint) rather than a live chunk
+    stream: VadStreamSession.feed() deliberately surfaces at most one
+    state-transition event per call and leaves the rest of a large chunk
+    buffered for "the next feed() call" (see WebRtcVadStreamSession.feed's
+    docstring) - handing the whole recording over as a single chunk would
+    silently strand its trailing SPEECH_END event with no further feed()
+    call ever coming to surface it, and the real speech in it would be
+    dropped as if nothing had been said."""
+    frame_bytes = int(sample_rate * frame_duration_ms / 1000) * 2  # 16-bit PCM
+    for i in range(0, len(audio), frame_bytes):
+        yield audio[i : i + frame_bytes]

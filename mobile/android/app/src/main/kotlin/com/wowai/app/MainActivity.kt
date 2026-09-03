@@ -22,9 +22,11 @@ private const val CALL_SCREENING_ROLE_REQUEST_CODE = 4001
 private const val PHONE_PERMISSIONS_REQUEST_CODE = 4002
 private const val OVERLAY_PERMISSION_REQUEST_CODE = 4003
 private const val INSTALL_PERMISSION_REQUEST_CODE = 4004
+private const val VOICE_PERMISSION_REQUEST_CODE = 4005
 private const val PERMISSIONS_CHANNEL = "com.wowai.app/permissions"
 private const val OVERLAY_CHANNEL = "com.wowai.app/overlay"
 private const val UPDATE_CHANNEL = "com.wowai.app/update"
+private const val VOICE_CHANNEL = "com.wowai.app/voice"
 
 /**
  * Phase 2 Block 6 + Phase 6 Part D: real Android call integration and the
@@ -61,12 +63,22 @@ private const val UPDATE_CHANNEL = "com.wowai.app/update"
  * real REQUEST_INSTALL_PACKAGES grant (another settings-screen permission,
  * Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES) and hand the downloaded file
  * to the real system package installer via FileProvider.
+ *
+ * Phase 6 Part E/J adds a fourth channel, VOICE_CHANNEL, for the real
+ * voice-command round trip: `hasPermission`/`requestPermission` drive the
+ * real RECORD_AUDIO runtime-permission dialog (a normal dangerous
+ * permission, so this reuses the same ActivityCompat.requestPermissions
+ * path as requestPhoneAndContacts, not a settings screen), `start`/`stop`
+ * drive a real VoiceRecorder capturing raw mic audio, and `play` hands
+ * the backend's real synthesized reply audio to VoicePlayer.
  */
 class MainActivity : FlutterActivity() {
     private var pendingPermissionsResult: MethodChannel.Result? = null
     private var pendingRoleResult: MethodChannel.Result? = null
     private var pendingOverlayResult: MethodChannel.Result? = null
     private var pendingInstallPermissionResult: MethodChannel.Result? = null
+    private var pendingVoicePermissionResult: MethodChannel.Result? = null
+    private val voiceRecorder = VoiceRecorder()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -110,6 +122,46 @@ class MainActivity : FlutterActivity() {
                     else -> result.notImplemented()
                 }
             }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, VOICE_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "hasPermission" ->
+                        result.success(hasPermission(android.Manifest.permission.RECORD_AUDIO))
+                    "requestPermission" -> requestVoicePermission(result)
+                    "start" -> {
+                        try {
+                            voiceRecorder.start()
+                            result.success(true)
+                        } catch (e: IllegalStateException) {
+                            result.error("RECORD_FAILED", e.message, null)
+                        }
+                    }
+                    "stop" -> result.success(voiceRecorder.stop())
+                    "play" -> {
+                        val bytes = call.argument<ByteArray>("bytes") ?: ByteArray(0)
+                        val sampleRate = call.argument<Int>("sampleRate") ?: VOICE_SAMPLE_RATE
+                        VoicePlayer.play(bytes, sampleRate)
+                        result.success(true)
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+    }
+
+    private fun requestVoicePermission(result: MethodChannel.Result) {
+        if (hasPermission(android.Manifest.permission.RECORD_AUDIO)) {
+            result.success(true)
+            return
+        }
+        if (pendingVoicePermissionResult != null) {
+            result.error("BUSY", "A permission request is already in progress", null)
+            return
+        }
+        pendingVoicePermissionResult = result
+        Log.i(TAG, "Requesting RECORD_AUDIO")
+        ActivityCompat.requestPermissions(
+            this, arrayOf(android.Manifest.permission.RECORD_AUDIO), VOICE_PERMISSION_REQUEST_CODE
+        )
     }
 
     private fun currentVersion(): Map<String, Any> {
@@ -245,6 +297,12 @@ class MainActivity : FlutterActivity() {
             Log.i(TAG, "Permission result: ${permissions.zip(grantResults.toTypedArray())}")
             pendingPermissionsResult?.success(currentStatus())
             pendingPermissionsResult = null
+        }
+        if (requestCode == VOICE_PERMISSION_REQUEST_CODE) {
+            val granted = hasPermission(android.Manifest.permission.RECORD_AUDIO)
+            Log.i(TAG, "RECORD_AUDIO permission result: granted=$granted")
+            pendingVoicePermissionResult?.success(granted)
+            pendingVoicePermissionResult = null
         }
     }
 

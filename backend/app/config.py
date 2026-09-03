@@ -68,6 +68,16 @@ class Settings(BaseSettings):
     otp_code_ttl_seconds: int = 600
     otp_max_attempts: int = 5
 
+    # SpeechToTextProvider/TextToSpeechProvider selection for the real
+    # voice-command endpoint (Phase 6 Part E/J) - "simulated" (default, no
+    # heavy ML deps required, matches model_provider's zero-dependency
+    # default) or the real self-hosted engine. Real voice actually
+    # transcribing/synthesizing requires STT_PROVIDER=local_whisper and
+    # TTS_PROVIDER=local_piper. Never a hosted third-party speech API.
+    stt_provider: str = "simulated"
+    tts_provider: str = "simulated"
+    whisper_model_size: str = "base"
+
 
 @lru_cache
 def get_settings() -> Settings:

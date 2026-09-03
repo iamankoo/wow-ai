@@ -180,5 +180,34 @@ class WowApiClient {
     return jsonDecode(response.body) as Map<String, dynamic>;
   }
 
+  /// POST /brain/voice-command - the real audio-in/audio-out round trip
+  /// (Phase 6 Part E/J): [pcm16] is a real microphone recording (raw
+  /// PCM16 mono at [sampleRate], the exact format WowVoiceBridge records
+  /// in), sent as the raw request body - no JSON/base64 wrapping on the
+  /// way up, since the backend's real STT/VAD pipeline wants raw bytes
+  /// directly. The response carries the real transcript, the real agent
+  /// reply text, and the real synthesized reply audio (base64-encoded in
+  /// the JSON response body, decoded here back into raw bytes for
+  /// WowVoiceBridge.play).
+  Future<Map<String, dynamic>> sendVoiceCommand({
+    required String userId,
+    required List<int> pcm16,
+    int sampleRate = 16000,
+    String? conversationId,
+  }) async {
+    final uri = Uri.parse('$baseUrl/brain/voice-command').replace(queryParameters: {
+      'user_id': userId,
+      'sample_rate': sampleRate.toString(),
+      if (conversationId != null) 'conversation_id': conversationId,
+    });
+    final response = await _client.post(
+      uri,
+      headers: {'Content-Type': 'application/octet-stream'},
+      body: pcm16,
+    );
+    if (response.statusCode != 200) _throwApiException(response);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   void dispose() => _client.close();
 }
