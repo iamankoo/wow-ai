@@ -543,3 +543,97 @@ run live in this environment for the same pre-existing reason - no
 `MODEL_PROVIDER` remains `rule_based` - both still opt-in, per
 instruction; promoting either is a product decision for a future round,
 not something this round changed.
+
+## Phase 2 — real voice + Android call pipeline
+
+Environment capability verified first (Android SDK/ADB/emulator all
+functional; Flutter/Java toolchain present via the installed Android
+Studio) before any implementation began.
+
+### Block 1: fix the Android build blocker
+
+`AndroidManifest.xml` referenced `@mipmap/ic_launcher`, but `res/`
+contained only `values/styles.xml` - no launcher-icon resources existed
+anywhere, so `flutter build apk --debug` failed AAPT resource linking.
+Fixed with the standard 5-density `ic_launcher.png` set
+(mdpi/hdpi/xhdpi/xxhdpi/xxxhdpi), generated via .NET `System.Drawing` -
+no new dependency, no UI/architecture change. Also committed the
+previously-missing Gradle wrapper (`gradlew`/`gradlew.bat`/
+`gradle-wrapper.jar` - only `gradle-wrapper.properties` was tracked
+before) and `pubspec.lock` for reproducible builds.
+
+**Verified for real:** `flutter build apk --debug` succeeded (97.8s
+Gradle task); `adb install` succeeded on the running
+`Medium_Phone_API_36.1` emulator; `adb shell am start` returned
+`result code=0`; the process stayed alive with a stable PID across
+repeated checks; logcat showed zero `FATAL EXCEPTION`/`AndroidRuntime`/
+ANR signatures; `flutter test` still passes (1 test, unchanged).
+
+Commit: `648ff1a`.
+
+### Block 2: real STT (`LocalWhisperSTTProvider`)
+
+Implements the pre-existing `SpeechToTextProvider` contract
+(`backend/app/interfaces/stt.py`, contract-only until now) using
+**faster-whisper** (CTranslate2-accelerated Whisper) - self-hosted, zero
+hosted speech API. `SimulatedSTTProvider` is untouched and remains
+available as a deterministic test double; this is the genuine engine.
+
+- `backend/app/providers/stt/local_whisper.py`: lazy-imports
+  faster-whisper/ctranslate2 (matching `LocalWOWModelProvider`'s
+  discipline - a deployment that never enables real STT needs neither
+  installed); own CTranslate2-native device resolver (`_resolve_stt_device`,
+  deliberately independent of `app.ml.device.resolve_inference_device`,
+  which requires torch - faster-whisper does not); raises
+  `STTNotAvailableError` at construction if the library is missing or the
+  model fails to load, never a silent fallback.
+- Audio contract (the interface itself doesn't specify one beyond "raw
+  bytes" + a separate `sample_rate`): raw 16-bit signed little-endian
+  PCM, mono - documented explicitly in the module.
+- Language: defaults to per-utterance auto-detection (`language=None`) -
+  the honest choice for code-switched Hindi/English (Hinglish) speech,
+  since Whisper has no dedicated "Hinglish" mode; a specific language can
+  still be forced via the constructor.
+- **Streaming honesty**: faster-whisper cannot produce a genuine partial
+  transcript from one audio chunk. `feed()` buffers and returns `None`
+  rather than fabricating a partial result; `close()` runs one real
+  transcription over everything buffered. The interface's chunked-delivery
+  contract is honored; only the partial-result promise is left honestly
+  unfulfilled, consistent with "do not fake functionality".
+- Confidence: derived from Whisper's `avg_logprob` via `exp()`, clamped
+  to `[0,1]` - an approximation, documented as such.
+
+**Real audio fixtures, not mocks:** `backend/tests/fixtures/audio/{hello,meeting_context}.wav`
+were synthesized via Windows' built-in `System.Speech` SAPI (no new
+dependency) with known text content, then actually transcribed by the
+real local model:
+
+| Fixture | Spoken text | Real transcription |
+|---|---|---|
+| `hello.wav` | "Hello, can you hear me?" | "Hello, can you hear me?" (exact) |
+| `meeting_context.wav` | "I am in a meeting, please handle my calls." | "I am in a meeting. Please handle my calls." (punctuation-only difference) |
+
+**Honest limitation**: only English (`en-US`) SAPI voices are installed
+in this environment, so no real Hindi/Hinglish audio fixture could be
+synthesized to verify transcription accuracy on those languages - the
+model is genuinely multilingual (Whisper) and the language-handling code
+path is real, but Hindi/Hinglish transcription *accuracy* is unverified
+here, not fabricated as tested.
+
+Model (`Systran/faster-whisper-base`) downloads to the platform's
+Hugging Face cache (outside the repo, never git-tracked) on first use -
+confirmed via `git status` showing no new artifacts after running it.
+New optional dependency file: `backend/requirements-local-stt.txt`
+(`faster-whisper`, `numpy`).
+
+11 new tests, all passing against the real model (not mocks):
+`backend/tests/test_local_whisper_stt.py` - real transcription of both
+fixtures, empty-audio rejection, non-native-sample-rate resampling,
+full streaming-session lifecycle (buffer/close/double-close/feed-after-close),
+device-resolution validation, and construction failing loudly for an
+invalid model name. Gated with `pytest.importorskip("faster_whisper")` -
+skips cleanly (not fails) if the optional dependency isn't installed,
+matching the `TEST_DATABASE_URL`/v3-model-gated pattern used elsewhere.
+
+Tests after this block: **225 passed, 10 skipped** (was 214/10).
+`training/tests/`: unchanged. No regressions.

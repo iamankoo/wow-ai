@@ -1,0 +1,5 @@
+# Optional dependencies for real speech-to-text (backend/app/providers/stt/local_whisper.py).
+# Not required for the default SimulatedSTTProvider used elsewhere in Phase 1.
+# Install with: pip install -r requirements.txt -r requirements-local-stt.txt
+faster-whisper>=1.0.0
+numpy>=1.24
