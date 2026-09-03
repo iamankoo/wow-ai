@@ -53,6 +53,8 @@ Let a phone owner delegate "answer this call for me" to an assistant that:
 | Rule-based reasoning provider (keyword intent classifier, zero ML deps) | **Implemented** |
 | WOW Brain v0 agent runtime (context -> reasoning -> state -> action) | **Implemented**, default |
 | WOW Agent orchestrator: explicit conversation state, confidence-gated policy engine, controlled tool registry (`backend/app/agent/`) | **Implemented**, opt-in (`AGENT_RUNTIME=wow_agent`; not yet the default) |
+| Real tools for every taxonomy action that doesn't need telephony: `SET_CONTEXT`/`CLEAR_CONTEXT` (real `ContextProfile` writes), `ENABLE_CALL_ASSISTANT`/`DISABLE_CALL_ASSISTANT`, `SAVE_MEMORY`/`COLLECT_MESSAGE`/`MARK_URGENT`, `CREATE_SUMMARY` | **Implemented** (`ANSWER_CALL`/`TRANSFER_CALL`/`END_CALL` still only reported - need real telephony) |
+| Multi-turn clarification loop: a low-confidence but actionable prediction is remembered and resolved (confirmed/cancelled/abandoned) on the caller's next reply, via a deterministic yes/no matcher | **Implemented** |
 | Structured, PII-safe per-stage latency observability (`backend/app/observability/`) - `WowAgent` only | **Implemented** |
 | Live low-confidence predictions from `WowAgent` feed the active-learning review queue (`/feedback/review-queue`) | **Implemented** |
 | Self-trained classifier model (intent/context/action, 3 heads) - v0 through v3 | **Implemented** (v3 training complete and verified, not yet the default - see §8) |
@@ -336,7 +338,9 @@ Two structurally separate systems, deliberately kept apart:
 ## 14. Testing
 
 ```
-backend/tests/    151 passed, 8 skipped (skipped tests require a live TEST_DATABASE_URL)
+backend/tests/    214 passed, 10 skipped (skipped tests require a live TEST_DATABASE_URL;
+                   includes 5 tests that run for real against the recovered WOW Brain v3
+                   model when training/models/wow-brain/v3/ is present locally)
 training/tests/   254 passed
 ```
 
@@ -421,8 +425,14 @@ wow-ai/
 - The default production reasoning provider is still the rule-based
   keyword classifier (`MODEL_PROVIDER=rule_based`); the trained neural
   model is available (`local_wow`) but opt-in, not yet the default.
-- v3 training is incomplete (14 of 20 epochs) - resume on GPU is required
-  before it can be evaluated as a finished model version.
+  v3 training is complete and held-out-test-verified (see §8) - the
+  remaining default-provider switch is a product decision, not a
+  missing-data blocker.
+- `WowAgent` (`AGENT_RUNTIME=wow_agent`) is opt-in, not the default
+  runtime (`AGENT_RUNTIME=wow_brain` still is), and its tool coverage
+  only reaches actions that don't need real telephony -
+  `ANSWER_CALL`/`TRANSFER_CALL`/`END_CALL` are still reported, not
+  executed. Every other taxonomy action has a real tool.
 - Three independent classification heads per request (3x inference cost)
   - a shared-trunk architecture is designed but not built.
   - Mixed precision (AMP/fp16) is not implemented in the training loop.

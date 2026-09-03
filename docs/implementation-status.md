@@ -479,3 +479,67 @@ unrelated reply reprocesses fresh rather than being misread).
 
 Tests after this block: 209 passed, 10 skipped (was 173/10). No
 regressions.
+
+### Block 4: full agent integration test using the recovered WOW Brain v3
+
+Everything in Blocks 1-3 had only ever been exercised with fakes
+(`FakeLLMProvider`) or the deterministic `RuleBasedLanguageModelProvider`
+- proving the orchestration logic works, never that it works when driven
+by the actual trained model. This block closes that gap:
+`backend/tests/test_agent_integration_v3.py` constructs a real
+`LocalWOWModelProvider` against the actual recovered artifacts at
+`training/models/wow-brain/v3/` (not a fake, not `rule_based`) and drives
+a full `WowAgent` (real `PolicyEngine`, real `ToolRegistry` with every
+tool from Blocks 1-2, in-memory storage) through five turns:
+
+- The exact three utterances this session's manual Kaggle-recovery
+  verification used (§4) - "Please handle my calls, I am in a meeting"
+  (English), "Main so raha hoon, please handle karo" (Hinglish), "Can you
+  tell him I called about the invoice?" - now run as an **automated
+  regression test** instead of a one-off manual check, asserting the
+  same predictions (`SET_CONTEXT`/`MEETING`, `SET_CONTEXT`/`SLEEPING`,
+  `NO_ACTION`) reproduce exactly, and that the first two actually
+  activate the corresponding `ContextProfile` through the real
+  `set_context` tool - closing the loop from "the model predicts
+  correctly" (held-out test evaluation, §4b) to "the agent built around
+  it behaves correctly when driven by that real prediction."
+- A gibberish-input robustness check: whatever the real model predicts
+  for out-of-distribution text, the turn must complete without raising
+  and every reported action must still be taxonomy-valid or `None` -
+  proving `is_valid_action` holds against genuine model output, not just
+  against fakes already engineered to be valid.
+- A two-turn state-persistence check against the real model.
+
+Gated the same way `test_integration_db.py` is gated on
+`TEST_DATABASE_URL`: `pytest.mark.skipif` on the model directory's
+`metadata.json` not existing (expected on a fresh checkout -
+`training/models/` is gitignored) plus `pytest.importorskip("transformers")`
+- skips cleanly rather than failing when the real artifacts/dependencies
+aren't present, and never substitutes a fake for this test's purpose.
+`MODEL_PROVIDER` is untouched by this test (it constructs
+`LocalWOWModelProvider` directly) and remains `rule_based` in
+`app/config.py` - **still not the default**, per instruction.
+
+All 5 new tests pass against the actual local model (~20s including
+three real `AutoModelForSequenceClassification.from_pretrained` loads).
+
+Tests after this block: **214 passed, 10 skipped** (was 209/10 - +5 new,
+all executed for real, not skipped, since the recovered v3 artifacts are
+present in this environment). `training/tests/`: 254 passed, unchanged
+(no training-side code touched this round). No regressions anywhere.
+
+### Agent Core completion - summary
+
+All four blocks done, in the dependency order specified, with tests run
+and a doc/commit/push cycle after each: `SET_CONTEXT` and every other
+taxonomy action that can be given a genuine effect now has a real,
+tested tool (only `ANSWER_CALL`/`TRANSFER_CALL`/`END_CALL` remain
+deferred, correctly, pending real telephony); the clarification loop is
+genuinely multi-turn; and the full stack is now proven against the real
+trained model, not just fakes. Backend test count: 151 -> 214 passed (63
+new tests), 8 -> 10 skipped (both DB-gated, +2 new DB-gated tests never
+run live in this environment for the same pre-existing reason - no
+`TEST_DATABASE_URL`). `AGENT_RUNTIME` remains `wow_brain` and
+`MODEL_PROVIDER` remains `rule_based` - both still opt-in, per
+instruction; promoting either is a product decision for a future round,
+not something this round changed.
