@@ -1,6 +1,7 @@
 from collections.abc import AsyncGenerator
 from pathlib import Path
 
+from app.agent.call_recorder import CallRecorder
 from app.agent.context_profile_repository import SqlContextProfileRepository
 from app.agent.orchestrator import WowAgent, build_default_tool_registry
 from app.agent.policy import PolicyEngine
@@ -115,4 +116,21 @@ async def get_verification_service() -> AsyncGenerator[VerificationService, None
         await session.commit()
 
 
-__all__ = ["get_db", "get_brain", "get_verification_service", "build_llm_provider"]
+async def get_call_recorder() -> AsyncGenerator[CallRecorder, None]:
+    """FastAPI dependency: a request-scoped CallRecorder (Phase 6 Part M)
+    wired to its own DB session, committing on success - same shape as
+    get_brain/get_verification_service. Its own transaction, independent
+    of get_brain's - call recording is a separate concern from the
+    agent's own state writes, and doesn't need to share one."""
+    async with AsyncSessionLocal() as session:
+        yield CallRecorder(session, SqlSummaryRepository(session))
+        await session.commit()
+
+
+__all__ = [
+    "get_db",
+    "get_brain",
+    "get_verification_service",
+    "get_call_recorder",
+    "build_llm_provider",
+]

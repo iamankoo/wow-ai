@@ -130,6 +130,36 @@ class WowApiClient {
     if (response.statusCode != 200) _throwApiException(response);
   }
 
+  /// GET /users/{id}/calls - real call history (Phase 6 Part M), written
+  /// by the actual /brain/command route whenever a real incoming call
+  /// (WowCallScreeningService.kt) reaches the backend. Never fabricated -
+  /// an empty list means WOW genuinely hasn't screened any calls yet.
+  Future<List<Map<String, dynamic>>> getCalls(String userId) async {
+    final response = await _client.get(Uri.parse('$baseUrl/users/$userId/calls'));
+    if (response.statusCode != 200) _throwApiException(response);
+    return (jsonDecode(response.body) as List).cast<Map<String, dynamic>>();
+  }
+
+  /// GET /calls/{id} - one call's full detail: real transcript segments
+  /// (empty when none exist - Android doesn't let this app capture live
+  /// call audio yet, see WowCallScreeningService's class doc) and real
+  /// summary.
+  Future<Map<String, dynamic>> getCallDetail(String callId) async {
+    final response = await _client.get(Uri.parse('$baseUrl/calls/$callId'));
+    if (response.statusCode != 200) _throwApiException(response);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  /// GET /users/{id}/calls/today-summary - real, computed-from-Call-rows
+  /// numbers for the main screen's Today's Summary tiles (Phase 6 Part K)
+  /// - never invented.
+  Future<Map<String, dynamic>> getCallsTodaySummary(String userId) async {
+    final response =
+        await _client.get(Uri.parse('$baseUrl/users/$userId/calls/today-summary'));
+    if (response.statusCode != 200) _throwApiException(response);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> sendBrainCommand({
     required String userId,
     required String text,

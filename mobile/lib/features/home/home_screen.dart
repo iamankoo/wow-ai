@@ -6,6 +6,7 @@ import '../../core/api_client.dart';
 import '../../core/constants.dart';
 import '../../core/local_prefs.dart';
 import '../../core/wow_theme.dart';
+import '../history/history_screen.dart';
 import '../profile/profile_screen.dart';
 import '../settings/settings_screen.dart';
 
@@ -69,11 +70,14 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _busy = false;
   String? _lastError;
   Timer? _countdownTimer;
+  Map<String, dynamic>? _todaySummary; // real GET .../calls/today-summary
+  List<Map<String, dynamic>>? _recentCalls; // real GET .../calls
 
   @override
   void initState() {
     super.initState();
     _refreshState();
+    _loadCallData();
     WowLocalPrefs.getFloatingButtonEnabled()
         .then((v) => mounted ? setState(() => _floatingButtonEnabled = v) : null);
     // Ticks the displayed countdown locally between real syncs, and
@@ -95,6 +99,34 @@ class _HomeScreenState extends State<HomeScreen> {
   void dispose() {
     _countdownTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _loadCallData() async {
+    try {
+      final summary = await widget.apiClient.getCallsTodaySummary(kDemoUserId);
+      final calls = await widget.apiClient.getCalls(kDemoUserId);
+      if (mounted) {
+        setState(() {
+          _todaySummary = summary;
+          _recentCalls = calls.take(3).toList();
+        });
+      }
+    } catch (_) {
+      // Backend unreachable/error - _lastError already surfaces this via
+      // the main card. Resolve to an honest empty state here rather than
+      // leaving _recentCalls null forever, which would spin the loading
+      // indicator indefinitely.
+      if (mounted) {
+        setState(() {
+          _recentCalls = [];
+        });
+      }
+    }
+  }
+
+  void _openHistory() {
+    Navigator.of(context)
+        .push(MaterialPageRoute(builder: (_) => HistoryScreen(apiClient: widget.apiClient)));
   }
 
   Future<void> _refreshState() async {
@@ -250,7 +282,7 @@ class _HomeScreenState extends State<HomeScreen> {
       backgroundColor: WowColors.background,
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: _refreshState,
+          onRefresh: () => Future.wait([_refreshState(), _loadCallData()]),
           color: WowColors.primaryBlue,
           backgroundColor: WowColors.surface,
           child: ListView(
@@ -640,29 +672,37 @@ class _HomeScreenState extends State<HomeScreen> {
                   )),
               const Spacer(),
               GestureDetector(
-                onTap: () => _notImplementedYet('Call history'),
+                onTap: _openHistory,
                 child: const Text('View all',
                     style: TextStyle(color: WowColors.primaryBlue, fontSize: 12)),
               ),
             ],
           ),
           const SizedBox(height: 12),
-          // Real backend has no call-history endpoint yet - an honest
-          // zero-state, not invented numbers.
-          Row(
-            children: [
-              stat(Icons.call, WowColors.success, '0', 'Calls handled\nby WOW'),
-              stat(Icons.person_outline, WowColors.primaryBlue, '0', 'Unique\ncallers'),
-              stat(Icons.schedule, WowColors.accentPurple, '0m', 'Total time\nsaved'),
-              stat(Icons.check_circle_outline, Colors.orange, '0', 'Tasks & info\ncollected'),
-            ],
-          ),
+          Builder(builder: (context) {
+            final summary = _todaySummary;
+            final calls = summary?['calls_handled']?.toString() ?? '-';
+            final callers = summary?['unique_callers']?.toString() ?? '-';
+            final seconds = summary?['total_seconds'] as int? ?? 0;
+            final minutes = seconds ~/ 60;
+            // Real numbers, computed from the same Call rows - not
+            // invented. No "Tasks & info collected" tile: there is no
+            // real, distinct backend source for that yet.
+            return Row(
+              children: [
+                stat(Icons.call, WowColors.success, calls, 'Calls handled\nby WOW'),
+                stat(Icons.person_outline, WowColors.primaryBlue, callers, 'Unique\ncallers'),
+                stat(Icons.schedule, WowColors.accentPurple, '${minutes}m', 'Total time\nlogged'),
+              ],
+            );
+          }),
         ],
       ),
     );
   }
 
   Widget _buildRecentCalls() {
+    final calls = _recentCalls;
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -685,20 +725,48 @@ class _HomeScreenState extends State<HomeScreen> {
                   )),
               const Spacer(),
               GestureDetector(
-                onTap: () => _notImplementedYet('Call history'),
+                onTap: _openHistory,
                 child: const Text('View all',
                     style: TextStyle(color: WowColors.primaryBlue, fontSize: 12)),
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 12),
-            child: Text(
-              'No calls handled yet - turn WOW ON to start.',
-              style: TextStyle(color: WowColors.textMuted, fontSize: 12),
-            ),
-          ),
+          const SizedBox(height: 12),
+          if (calls == null)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Center(
+                  child: SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: WowColors.primaryBlue))),
+            )
+          else if (calls.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Text(
+                'No calls handled yet - turn WOW ON to start.',
+                style: TextStyle(color: WowColors.textMuted, fontSize: 12),
+              ),
+            )
+          else
+            ...calls.map((call) {
+              final name = (call['caller_name'] as String?) ?? call['caller_number'] as String;
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(
+                  children: [
+                    Container(width: 6, height: 6, decoration: const BoxDecoration(color: WowColors.success, shape: BoxShape.circle)),
+                    const SizedBox(width: 10),
+                    Expanded(
+                        child: Text(name,
+                            style: const TextStyle(color: WowColors.textSecondary, fontSize: 12.5))),
+                    Text(call['status'] as String? ?? '',
+                        style: const TextStyle(color: WowColors.textMuted, fontSize: 11)),
+                  ],
+                ),
+              );
+            }),
         ],
       ),
     );
@@ -736,7 +804,7 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Row(
           children: [
             navItem(Icons.home, 'Home', active: true),
-            navItem(Icons.history, 'History'),
+            navItem(Icons.history, 'History', onTap: _openHistory),
             Expanded(
               child: GestureDetector(
                 onTap: () => _openCommandSheet(voice: true),
