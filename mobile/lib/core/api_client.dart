@@ -16,6 +16,17 @@ class WowApiClient {
     return response.statusCode == 200;
   }
 
+  /// GET /users/{id} - reports the real persisted User row, including
+  /// call_assistant_enabled (Phase 2 Block 7's real ANSWER_CALL
+  /// authorization flag, also checked by WowAutoAnswer.kt).
+  Future<Map<String, dynamic>> getUser(String userId) async {
+    final response = await _client.get(Uri.parse('$baseUrl/users/$userId'));
+    if (response.statusCode != 200) {
+      throw Exception('Get user failed: ${response.statusCode} ${response.body}');
+    }
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> sendBrainCommand({
     required String userId,
     required String text,

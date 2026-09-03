@@ -19,3 +19,6 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/splash_screen.png
+    - assets/wow_icon.png
