@@ -4,7 +4,10 @@ import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
 import '../../core/constants.dart';
+import '../../core/local_prefs.dart';
 import '../../core/wow_theme.dart';
+import '../profile/profile_screen.dart';
+import '../settings/settings_screen.dart';
 
 class _Duration4Option {
   const _Duration4Option(this.label, this.icon, this.apiValue);
@@ -58,6 +61,7 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  Map<String, dynamic>? _user; // full real user row, for Profile/Settings navigation
   bool? _callAssistantEnabled; // null while loading
   int? _activeSecondsRemaining; // null = off, or on with no expiry
   bool _floatingButtonEnabled = true;
@@ -70,6 +74,8 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     _refreshState();
+    WowLocalPrefs.getFloatingButtonEnabled()
+        .then((v) => mounted ? setState(() => _floatingButtonEnabled = v) : null);
     // Ticks the displayed countdown locally between real syncs, and
     // re-syncs with the real backend the moment the local countdown would
     // reach zero - that's when server-side lazy expiry actually needs to
@@ -95,6 +101,7 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final response = await widget.apiClient.getUser(kDemoUserId);
       setState(() {
+        _user = response;
         _callAssistantEnabled = response['call_assistant_enabled'] as bool? ?? false;
         _activeSecondsRemaining = response['active_seconds_remaining'] as int?;
         _lastError = null;
@@ -214,6 +221,25 @@ class _HomeScreenState extends State<HomeScreen> {
   void _notImplementedYet(String feature) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('$feature is coming soon')),
+    );
+  }
+
+  Future<void> _setFloatingButtonEnabled(bool value) async {
+    setState(() => _floatingButtonEnabled = value);
+    await WowLocalPrefs.setFloatingButtonEnabled(value);
+  }
+
+  void _openSettings() {
+    final user = _user;
+    if (user == null) return;
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => SettingsScreen(apiClient: widget.apiClient, user: user)),
+    );
+  }
+
+  void _openProfile() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => ProfileScreen(apiClient: widget.apiClient)),
     );
   }
 
@@ -546,17 +572,17 @@ class _HomeScreenState extends State<HomeScreen> {
             child: Switch(
               value: _floatingButtonEnabled,
               activeThumbColor: WowColors.primaryBlue,
-              onChanged: (v) => setState(() => _floatingButtonEnabled = v),
+              onChanged: _setFloatingButtonEnabled,
             ),
           ),
-          onTap: () => setState(() => _floatingButtonEnabled = !_floatingButtonEnabled),
+          onTap: () => _setFloatingButtonEnabled(!_floatingButtonEnabled),
         ),
         tile(
           icon: Icons.settings_outlined,
           color: WowColors.textSecondary,
           title: 'Settings',
           subtitle: 'Customize WOW',
-          onTap: () => _notImplementedYet('Settings'),
+          onTap: _openSettings,
         ),
       ],
     );
@@ -679,10 +705,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildBottomNav() {
-    Widget navItem(IconData icon, String label, {bool active = false}) {
+    Widget navItem(IconData icon, String label, {bool active = false, VoidCallback? onTap}) {
       return Expanded(
         child: InkWell(
-          onTap: () => active ? null : _notImplementedYet(label),
+          onTap: active ? null : (onTap ?? () => _notImplementedYet(label)),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -728,7 +754,7 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
             navItem(Icons.contacts_outlined, 'Contacts'),
-            navItem(Icons.person_outline, 'Profile'),
+            navItem(Icons.person_outline, 'Profile', onTap: _openProfile),
           ],
         ),
       ),

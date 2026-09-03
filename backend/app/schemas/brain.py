@@ -54,6 +54,7 @@ class UserRead(BaseModel):
     profile_complete: bool = False
     call_assistant_enabled: bool = False
     active_until: datetime | None = None
+    created_at: datetime
 
     model_config = {"from_attributes": True}
 
