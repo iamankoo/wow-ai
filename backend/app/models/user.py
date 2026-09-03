@@ -1,7 +1,7 @@
 import enum
-from datetime import date
+from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, Date, Enum, String
+from sqlalchemy import Boolean, Date, DateTime, Enum, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TimestampMixin, UUIDPKMixin
@@ -63,9 +63,28 @@ class User(UUIDPKMixin, TimestampMixin, Base):
 
     # Whether WOW is currently authorized to answer/handle incoming calls on
     # this user's behalf - written by the enable_call_assistant/
-    # disable_call_assistant agent tools (app/agent/builtin_tools.py), off
-    # by default so automation is always opt-in.
+    # disable_call_assistant agent tools (app/agent/builtin_tools.py) and by
+    # POST /users/{id}/activation (Phase 6 Part G's real duration control),
+    # off by default so automation is always opt-in.
     call_assistant_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Phase 6 Part G: when set, WOW auto-deactivates at this real timestamp
+    # (the 15 min/1 hour/5 hour options) - None while active means "Until I
+    # stop" (indefinite, matches this column's own None-by-default when
+    # inactive). Lazily enforced - see routes/users.py's
+    # _apply_activation_expiry - rather than a background scheduler this
+    # project has no infrastructure for.
+    active_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    @property
+    def is_currently_active(self) -> bool:
+        """Read-only truth, independent of whether the lazy-expiry flip in
+        routes/users.py has run yet - never mutates."""
+        if not self.call_assistant_enabled:
+            return False
+        if self.active_until is None:
+            return True
+        return datetime.now(timezone.utc) < self.active_until
 
     @property
     def age(self) -> int | None:

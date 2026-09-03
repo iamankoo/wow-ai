@@ -45,7 +45,10 @@ class WowApiClient {
 
   /// GET /users/{id} - reports the real persisted User row, including
   /// call_assistant_enabled (Phase 2 Block 7's real ANSWER_CALL
-  /// authorization flag, also checked by WowAutoAnswer.kt).
+  /// authorization flag, also checked by WowAutoAnswer.kt) and
+  /// active_until/active_seconds_remaining (Phase 6 Part G's real,
+  /// lazily-enforced activation expiry - reading this user is what
+  /// actually flips an expired activation off server-side).
   Future<Map<String, dynamic>> getUser(String userId) async {
     final response = await _client.get(Uri.parse('$baseUrl/users/$userId'));
     if (response.statusCode != 200) _throwApiException(response);
@@ -80,6 +83,23 @@ class WowApiClient {
       Uri.parse('$baseUrl/users/$userId'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode(body),
+    );
+    if (response.statusCode != 200) _throwApiException(response);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  /// POST /users/{id}/activation - the real endpoint the main screen's
+  /// power button and duration chips call (Phase 6 Part G). `duration` is
+  /// one of '15m' | '1h' | '5h' | 'until_stop' | 'off'. Deterministic -
+  /// bypasses the agent/NLU layer entirely, since these are fixed UI
+  /// buttons, not free text. Returns the real resulting user row,
+  /// including the real active_until/active_seconds_remaining the
+  /// backend computed - never assume the request succeeded silently.
+  Future<Map<String, dynamic>> setActivation(String userId, String duration) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/users/$userId/activation'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'duration': duration}),
     );
     if (response.statusCode != 200) _throwApiException(response);
     return jsonDecode(response.body) as Map<String, dynamic>;

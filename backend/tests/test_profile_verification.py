@@ -5,7 +5,7 @@ instance. Requires TEST_DATABASE_URL - skipped automatically otherwise.
 """
 
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi import FastAPI
@@ -247,3 +247,59 @@ async def test_verification_routes_full_round_trip(session):
 
     await session.refresh(user)
     assert user.email_verified is True
+
+
+async def test_activation_endpoint_sets_real_expiry_and_off_clears_it(session):
+    user = User(display_name="Aniket", phone_number="+10000000017")
+    session.add(user)
+    await session.flush()
+    await session.commit()
+
+    app = FastAPI()
+    app.include_router(users.router)
+    app.dependency_overrides[get_db] = lambda: session
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(f"/users/{user.id}/activation", json={"duration": "15m"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["call_assistant_enabled"] is True
+        assert body["active_until"] is not None
+        assert 0 < body["active_seconds_remaining"] <= 15 * 60
+
+        resp = await client.post(f"/users/{user.id}/activation", json={"duration": "until_stop"})
+        body = resp.json()
+        assert body["call_assistant_enabled"] is True
+        assert body["active_until"] is None
+        assert body["active_seconds_remaining"] is None
+
+        resp = await client.post(f"/users/{user.id}/activation", json={"duration": "off"})
+        body = resp.json()
+        assert body["call_assistant_enabled"] is False
+        assert body["active_until"] is None
+
+
+async def test_expired_activation_auto_deactivates_on_next_real_read(session):
+    user = User(display_name="Aniket", phone_number="+10000000018")
+    session.add(user)
+    await session.flush()
+    user.call_assistant_enabled = True
+    user.active_until = datetime.now(timezone.utc) - timedelta(seconds=5)  # already expired
+    await session.commit()
+
+    app = FastAPI()
+    app.include_router(users.router)
+    app.dependency_overrides[get_db] = lambda: session
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get(f"/users/{user.id}")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["call_assistant_enabled"] is False
+    assert body["active_until"] is None
+
+    await session.refresh(user)
+    assert user.call_assistant_enabled is False  # persisted, not just reported

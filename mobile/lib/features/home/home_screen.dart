@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
@@ -5,18 +7,29 @@ import '../../core/constants.dart';
 import '../../core/wow_theme.dart';
 
 class _Duration4Option {
-  const _Duration4Option(this.label, this.icon, this.spokenPhrase);
+  const _Duration4Option(this.label, this.icon, this.apiValue);
   final String label;
   final IconData icon;
-  final String spokenPhrase;
+  /// Value POST /users/{id}/activation expects - '15m' | '1h' | '5h' |
+  /// 'until_stop'.
+  final String apiValue;
 }
 
 const _durationOptions = [
-  _Duration4Option('15 mins', Icons.access_time, '15 minutes'),
-  _Duration4Option('1 hour', Icons.access_time, '1 hour'),
-  _Duration4Option('5 hours', Icons.access_time, '5 hours'),
-  _Duration4Option('Until I stop', Icons.all_inclusive, 'until I stop it'),
+  _Duration4Option('15 mins', Icons.access_time, '15m'),
+  _Duration4Option('1 hour', Icons.access_time, '1h'),
+  _Duration4Option('5 hours', Icons.access_time, '5h'),
+  _Duration4Option('Until I stop', Icons.all_inclusive, 'until_stop'),
 ];
+
+String _formatRemaining(int seconds) {
+  final h = seconds ~/ 3600;
+  final m = (seconds % 3600) ~/ 60;
+  final s = seconds % 60;
+  if (h > 0) return '${h}h ${m}m left';
+  if (m > 0) return '${m}m ${s}s left';
+  return '${s}s left';
+}
 
 /// Main WOW AI screen - visually follows assets/main_page.png (the supplied
 /// design reference) closely: the ON/OFF call-assistant control, duration
@@ -24,14 +37,17 @@ const _durationOptions = [
 /// bottom navigation all mirror that layout rather than a generic Flutter
 /// template.
 ///
-/// Real backend wiring, not decoration: the ON/OFF state is read from and
-/// written through the same GET /users/{id} (Phase 2 Block 7) and
-/// /brain/command endpoints already used elsewhere in this app - toggling
-/// WOW sends a real natural-language command through the real agent
-/// pipeline (the same path EnableCallAssistantTool/DisableCallAssistantTool
-/// are reached through), not a local-only switch. Today's Summary and
-/// Recent Calls Handled show an honest empty state rather than invented
-/// numbers, because no call-history endpoint exists yet on the backend.
+/// Real backend wiring, not decoration: the ON/OFF state and its remaining
+/// duration are read from and written through the real GET /users/{id} and
+/// POST /users/{id}/activation endpoints (Phase 6 Part G) - the power
+/// button and duration chips call the deterministic activation endpoint
+/// directly rather than going through the agent/NLU layer (that remains
+/// the path for actual voice/text commands via /brain/command). Expiry is
+/// enforced server-side (lazily, on the next real read) so restarting the
+/// app can never show a stale "still on" state after a duration has
+/// actually elapsed. Today's Summary and Recent Calls Handled show an
+/// honest empty state rather than invented numbers, because no
+/// call-history endpoint exists yet on the backend.
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key, required this.apiClient});
 
@@ -43,15 +59,36 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   bool? _callAssistantEnabled; // null while loading
+  int? _activeSecondsRemaining; // null = off, or on with no expiry
   bool _floatingButtonEnabled = true;
   int _selectedDuration = 0;
   bool _busy = false;
   String? _lastError;
+  Timer? _countdownTimer;
 
   @override
   void initState() {
     super.initState();
     _refreshState();
+    // Ticks the displayed countdown locally between real syncs, and
+    // re-syncs with the real backend the moment the local countdown would
+    // reach zero - that's when server-side lazy expiry actually needs to
+    // run to flip call_assistant_enabled off.
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      final remaining = _activeSecondsRemaining;
+      if (remaining == null) return;
+      if (remaining <= 1) {
+        _refreshState();
+      } else {
+        setState(() => _activeSecondsRemaining = remaining - 1);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _countdownTimer?.cancel();
+    super.dispose();
   }
 
   Future<void> _refreshState() async {
@@ -59,6 +96,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final response = await widget.apiClient.getUser(kDemoUserId);
       setState(() {
         _callAssistantEnabled = response['call_assistant_enabled'] as bool? ?? false;
+        _activeSecondsRemaining = response['active_seconds_remaining'] as int?;
         _lastError = null;
       });
     } catch (e) {
@@ -71,19 +109,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _toggleWow() async {
     final turningOn = _callAssistantEnabled != true;
-    final phrase = turningOn
-        ? 'turn on wow ai for ${_durationOptions[_selectedDuration].spokenPhrase}'
-        : 'turn off wow ai';
+    final duration = turningOn ? _durationOptions[_selectedDuration].apiValue : 'off';
     setState(() => _busy = true);
     try {
-      await widget.apiClient.sendBrainCommand(userId: kDemoUserId, text: phrase);
-    } catch (_) {
-      // Surfaced via _refreshState()'s own error handling below - the
-      // authoritative state is always re-read from the backend, never
-      // assumed from the request having been sent.
+      final response = await widget.apiClient.setActivation(kDemoUserId, duration);
+      setState(() {
+        _callAssistantEnabled = response['call_assistant_enabled'] as bool? ?? false;
+        _activeSecondsRemaining = response['active_seconds_remaining'] as int?;
+        _lastError = null;
+      });
+    } catch (e) {
+      setState(() => _lastError = 'Could not reach WOW: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
-    await _refreshState();
-    if (mounted) setState(() => _busy = false);
   }
 
   Future<void> _openCommandSheet({required bool voice}) async {
@@ -292,6 +331,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   fontSize: 13,
                 ),
               ),
+              if (isOn && _activeSecondsRemaining != null) ...[
+                const SizedBox(width: 8),
+                Text(
+                  '· ${_formatRemaining(_activeSecondsRemaining!)}',
+                  style: const TextStyle(color: WowColors.primaryBlue, fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+              ],
             ],
           ),
           const SizedBox(height: 12),

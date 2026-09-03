@@ -1,6 +1,8 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,6 +11,31 @@ from app.models.user import User
 from app.schemas.brain import UserCreate, UserProfileUpdate, UserRead
 
 router = APIRouter(prefix="/users", tags=["users"])
+
+_ACTIVATION_DURATIONS: dict[str, timedelta | None] = {
+    "15m": timedelta(minutes=15),
+    "1h": timedelta(hours=1),
+    "5h": timedelta(hours=5),
+    "until_stop": None,
+}
+
+
+class ActivationRequest(BaseModel):
+    duration: Literal["15m", "1h", "5h", "until_stop", "off"]
+
+
+async def _apply_activation_expiry(user: User, session: AsyncSession) -> None:
+    """Real, lazy expiry (Phase 6 Part G) - this project has no background
+    scheduler, so "WOW automatically becomes inactive" is enforced the
+    moment anything next reads this user's state, not on a timer. Flips
+    and persists call_assistant_enabled the instant active_until has
+    passed, so a client never sees a stale "still on" reading."""
+    if user.call_assistant_enabled and user.active_until is not None:
+        if datetime.now(timezone.utc) >= user.active_until:
+            user.call_assistant_enabled = False
+            user.active_until = None
+            await session.commit()
+            await session.refresh(user)
 
 
 @router.post("", response_model=UserRead, status_code=201)
@@ -28,6 +55,36 @@ async def get_user(user_id: str, session: AsyncSession = Depends(get_db)) -> Use
     user = result.scalars().first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
+    await _apply_activation_expiry(user, session)
+    return user
+
+
+@router.post("/{user_id}/activation", response_model=UserRead)
+async def set_activation(
+    user_id: str, payload: ActivationRequest, session: AsyncSession = Depends(get_db)
+) -> User:
+    """Phase 6 Part G - the real endpoint the main screen's ON/OFF power
+    button and duration chips call directly. Deterministic by design: the
+    duration options are fixed UI buttons, not free text, so this bypasses
+    the agent/NLU layer entirely rather than routing a button tap through
+    a probabilistic classifier - EnableCallAssistantTool/
+    DisableCallAssistantTool (natural-language "turn on WOW") remain the
+    path for voice/text commands and write the exact same two columns."""
+    result = await session.execute(select(User).where(User.id == user_id))
+    user = result.scalars().first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if payload.duration == "off":
+        user.call_assistant_enabled = False
+        user.active_until = None
+    else:
+        delta = _ACTIVATION_DURATIONS[payload.duration]
+        user.call_assistant_enabled = True
+        user.active_until = (datetime.now(timezone.utc) + delta) if delta else None
+
+    await session.commit()
+    await session.refresh(user)
     return user
 
 

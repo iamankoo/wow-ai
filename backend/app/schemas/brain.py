@@ -1,7 +1,7 @@
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
 
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 
 from app.models.user import PreferredLanguage, VoiceGender
 
@@ -53,8 +53,21 @@ class UserRead(BaseModel):
     voice_gender: VoiceGender = VoiceGender.FEMALE
     profile_complete: bool = False
     call_assistant_enabled: bool = False
+    active_until: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def active_seconds_remaining(self) -> int | None:
+        """Phase 6 Part K - lets the main screen show a real countdown
+        instead of just an on/off state. None means either off, or on
+        with no expiry ("Until I stop") - the UI already has
+        call_assistant_enabled to tell those apart."""
+        if not self.call_assistant_enabled or self.active_until is None:
+            return None
+        remaining = (self.active_until - datetime.now(timezone.utc)).total_seconds()
+        return max(0, int(remaining))
 
 
 class ContactCreate(BaseModel):
