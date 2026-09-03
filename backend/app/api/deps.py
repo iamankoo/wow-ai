@@ -5,6 +5,7 @@ from app.agent.context_profile_repository import SqlContextProfileRepository
 from app.agent.orchestrator import WowAgent, build_default_tool_registry
 from app.agent.policy import PolicyEngine
 from app.agent.summary_repository import SqlSummaryRepository
+from app.agent.user_settings_repository import SqlUserSettingsRepository
 from app.brain.context_engine import DefaultContextEngine
 from app.brain.state_repository import SqlStateRepository
 from app.brain.wow_brain import WowBrain
@@ -67,8 +68,9 @@ async def get_brain() -> AsyncGenerator[AgentRuntime, None]:
         if settings.agent_runtime == "wow_agent":
             summary_repo = SqlSummaryRepository(session)
             context_profile_repo = SqlContextProfileRepository(session)
+            user_settings_repo = SqlUserSettingsRepository(session)
             tool_registry = build_default_tool_registry(
-                memory_store, summary_repo, context_profile_repo
+                memory_store, summary_repo, context_profile_repo, user_settings_repo
             )
             policy_engine = PolicyEngine(
                 min_sensitive_confidence=settings.policy_min_sensitive_confidence

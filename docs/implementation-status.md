@@ -391,3 +391,37 @@ compiles in isolation.
 
 Tests after this block: 156 passed, 9 skipped (was 151/8 - +5 new unit
 tests, +1 new DB-gated integration test). No regressions.
+
+### Block 2: the remaining currently-defined agent tools
+
+Completed every taxonomy action that can be given a genuine effect
+without real telephony (see `orchestrator.py`'s `_ACTION_TOOL_MAP`
+comment for the exact per-action rationale, reproduced here):
+
+| Action | Treatment | Why |
+|---|---|---|
+| `CLEAR_CONTEXT` | Real tool (`clear_context`) | Same `ContextProfileRepository` as `SET_CONTEXT` (Block 1); `clear_active` deactivates without requiring a name - "already clear" is a success (0 cleared), not an error |
+| `ENABLE_CALL_ASSISTANT` | Real tool (`enable_call_assistant`) | New `UserSettingsRepository` (ABC + SQL + in-memory, same pattern) writing a new `User.call_assistant_enabled` column (default `False` - opt-in, matching `training_data_consent`'s existing convention) |
+| `DISABLE_CALL_ASSISTANT` | Real tool (`disable_call_assistant`) | Same repository, `enabled=False` |
+| `COLLECT_MESSAGE` | Real tool (`collect_message`) | Reuses the existing `MemoryStore` (`source_type="caller_message"`, `memory_type=EPISODIC`) - no new store needed |
+| `MARK_URGENT` | Real tool (`mark_urgent`) | Also reuses `MemoryStore` (`source_type="mark_urgent"`, `memory_type=SHORT_TERM`, content prefixed `"URGENT: "`) rather than adding a new schema column, since the existing store already models exactly this shape of fact |
+| `ASK_CALLER_REASON` | Response-template only, no tool | Purely conversational - no store side effect to perform. `generate_response` gained an `action` parameter and `_ACTION_TEMPLATES` so this action gets a real question ("Could you tell me the reason for your call?") instead of the generic fallback |
+| `NO_ACTION` | No tool (unchanged) | A no-op by definition |
+| `ANSWER_CALL` / `TRANSFER_CALL` / `END_CALL` | **Still deferred, unchanged** | Genuinely require real telephony, explicitly out of scope for this round per instruction ("do not start ... telephony ... yet"). `TRANSFER_CALL` already gets a `HANDOFF` policy verdict for unknown callers (pre-existing, `PolicyEngine`) - only the actual carrier-side effect is missing |
+
+`build_default_tool_registry` now takes a required `user_settings_repository`
+argument (same required-not-defaulted rationale as Block 1's
+`context_profile_repository`) - updated at all 6 call sites again.
+
+New tests: `test_agent_tools.py` (+6, one per new tool plus the
+"clearing when nothing was active is still a success" edge case),
+`test_agent_orchestrator.py` (+3, end-to-end through the full `WowAgent`
+stack for `COLLECT_MESSAGE`/`ENABLE_CALL_ASSISTANT`/`ASK_CALLER_REASON`),
+new `test_agent_response.py` (+8, direct coverage of `generate_response` -
+previously untested in isolation, only exercised indirectly), and a new
+DB-gated `test_user_settings_repository_persists_call_assistant_flag` in
+`test_integration_db.py` confirming the write survives a real commit and
+that a nonexistent user_id returns `False` rather than raising.
+
+Tests after this block: 173 passed, 10 skipped (was 156/9 - +17 new unit
+tests, +1 new DB-gated integration test). No regressions.

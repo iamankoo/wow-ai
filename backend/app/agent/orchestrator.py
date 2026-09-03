@@ -17,8 +17,18 @@ authorizes a sensitive action, and a tool failure degrades to a spoken
 apology rather than raising through to the caller.
 """
 
-from app.agent.builtin_tools import CreateSummaryTool, SaveMemoryTool, SetContextTool
+from app.agent.builtin_tools import (
+    ClearContextTool,
+    CollectMessageTool,
+    CreateSummaryTool,
+    DisableCallAssistantTool,
+    EnableCallAssistantTool,
+    MarkUrgentTool,
+    SaveMemoryTool,
+    SetContextTool,
+)
 from app.agent.context_profile_repository import ContextProfileRepository
+from app.agent.user_settings_repository import UserSettingsRepository
 from app.agent.policy import PolicyEngine, PolicyVerdict
 from app.agent.response import generate_response
 from app.agent.state import CallLifecycleStatus, ConversationState
@@ -44,11 +54,19 @@ _STATE_KEY = "conversation_state"
 # app.agent.response._ACTION_TEMPLATES; NO_ACTION is a no-op by definition),
 # or because executing them needs real telephony (ANSWER_CALL, TRANSFER_CALL,
 # END_CALL) that does not exist yet in this phase - reporting them without
-# pretending to execute them is the honest option.
+# pretending to execute them is the honest option. This is every taxonomy
+# action that can be given a genuine effect without telephony - see
+# docs/implementation-status.md "Agent Core completion" for the full
+# per-action rationale.
 _ACTION_TOOL_MAP: dict[str, str] = {
     Action.SAVE_MEMORY.value: SaveMemoryTool.name,
     Action.CREATE_SUMMARY.value: CreateSummaryTool.name,
     Action.SET_CONTEXT.value: SetContextTool.name,
+    Action.CLEAR_CONTEXT.value: ClearContextTool.name,
+    Action.ENABLE_CALL_ASSISTANT.value: EnableCallAssistantTool.name,
+    Action.DISABLE_CALL_ASSISTANT.value: DisableCallAssistantTool.name,
+    Action.COLLECT_MESSAGE.value: CollectMessageTool.name,
+    Action.MARK_URGENT.value: MarkUrgentTool.name,
 }
 
 
@@ -64,12 +82,18 @@ def build_default_tool_registry(
     memory_store: MemoryStore,
     summary_repository: SummaryRepository,
     context_profile_repository: ContextProfileRepository,
+    user_settings_repository: UserSettingsRepository,
 ) -> ToolRegistry:
     return ToolRegistry(
         [
             SaveMemoryTool(memory_store),
             CreateSummaryTool(summary_repository),
             SetContextTool(context_profile_repository),
+            ClearContextTool(context_profile_repository),
+            EnableCallAssistantTool(user_settings_repository),
+            DisableCallAssistantTool(user_settings_repository),
+            CollectMessageTool(memory_store),
+            MarkUrgentTool(memory_store),
         ]
     )
 
@@ -214,7 +238,10 @@ class WowAgent(AgentRuntime):
 
         with timings.measure("response"):
             reply = generate_response(
-                llm_content=llm_response.content, verdict=decision.verdict, tool_failed=tool_failed
+                llm_content=llm_response.content,
+                verdict=decision.verdict,
+                tool_failed=tool_failed,
+                action=candidate_action,
             )
         state.response_text = reply
         state.record_turn("assistant", reply)
@@ -315,4 +342,8 @@ def _build_tool_arguments(tool_name: str, text: str, state: ConversationState) -
         return {"conversation_id": state.session_id, "summary_text": transcript_text}
     if tool_name == SetContextTool.name:
         return {"context_mode": state.context_mode}
+    if tool_name in (ClearContextTool.name, EnableCallAssistantTool.name, DisableCallAssistantTool.name):
+        return {}
+    if tool_name in (CollectMessageTool.name, MarkUrgentTool.name):
+        return {"content": text}
     return {}

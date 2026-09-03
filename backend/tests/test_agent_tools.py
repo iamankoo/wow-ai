@@ -7,13 +7,22 @@ import asyncio
 
 import pytest
 
-from app.agent.builtin_tools import SetContextTool
+from app.agent.builtin_tools import (
+    ClearContextTool,
+    CollectMessageTool,
+    DisableCallAssistantTool,
+    EnableCallAssistantTool,
+    MarkUrgentTool,
+    SetContextTool,
+)
 from app.agent.context_profile_repository import InMemoryContextProfileRepository
 from app.agent.tools import (
     Tool,
     ToolContext,
     ToolRegistry,
 )
+from app.agent.user_settings_repository import InMemoryUserSettingsRepository
+from tests.agent_fakes import InMemoryMemoryStore
 
 
 class EchoTool(Tool):
@@ -150,3 +159,57 @@ async def test_set_context_tool_rejects_out_of_taxonomy_context_mode(ctx):
     assert result.success is False
     assert "not a known context mode" in result.error
     assert repo.active_name(user_id="u1") is None
+
+
+async def test_clear_context_tool_deactivates_the_active_profile(ctx):
+    repo = InMemoryContextProfileRepository()
+    registry = ToolRegistry([SetContextTool(repo), ClearContextTool(repo)])
+    await registry.invoke("set_context", ctx, {"context_mode": "BUSY"})
+    result = await registry.invoke("clear_context", ctx, {})
+    assert result.success is True
+    assert result.output == {"cleared": 1}
+    assert repo.active_name(user_id="u1") is None
+
+
+async def test_clear_context_tool_is_a_success_when_nothing_was_active(ctx):
+    repo = InMemoryContextProfileRepository()
+    registry = ToolRegistry([ClearContextTool(repo)])
+    result = await registry.invoke("clear_context", ctx, {})
+    assert result.success is True
+    assert result.output == {"cleared": 0}
+
+
+async def test_enable_call_assistant_tool_sets_the_flag(ctx):
+    repo = InMemoryUserSettingsRepository()
+    registry = ToolRegistry([EnableCallAssistantTool(repo)])
+    result = await registry.invoke("enable_call_assistant", ctx, {})
+    assert result.success is True
+    assert result.output == {"call_assistant_enabled": True, "user_found": True}
+    assert repo.is_enabled(user_id="u1") is True
+
+
+async def test_disable_call_assistant_tool_clears_the_flag(ctx):
+    repo = InMemoryUserSettingsRepository()
+    registry = ToolRegistry([EnableCallAssistantTool(repo), DisableCallAssistantTool(repo)])
+    await registry.invoke("enable_call_assistant", ctx, {})
+    result = await registry.invoke("disable_call_assistant", ctx, {})
+    assert result.success is True
+    assert repo.is_enabled(user_id="u1") is False
+
+
+async def test_collect_message_tool_persists_the_message_as_a_memory(ctx):
+    memory_store = InMemoryMemoryStore()
+    registry = ToolRegistry([CollectMessageTool(memory_store)])
+    result = await registry.invoke("collect_message", ctx, {"content": "Call me back today"})
+    assert result.success is True
+    assert memory_store.records[0]["content"] == "Call me back today"
+    assert memory_store.records[0]["source_type"] == "caller_message"
+
+
+async def test_mark_urgent_tool_persists_a_flagged_short_term_memory(ctx):
+    memory_store = InMemoryMemoryStore()
+    registry = ToolRegistry([MarkUrgentTool(memory_store)])
+    result = await registry.invoke("mark_urgent", ctx, {"content": "House is flooding"})
+    assert result.success is True
+    assert memory_store.records[0]["content"] == "URGENT: House is flooding"
+    assert memory_store.records[0]["source_type"] == "mark_urgent"

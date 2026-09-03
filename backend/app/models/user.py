@@ -17,3 +17,9 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     # per-submission override - conservative by design (opt-in, not
     # opt-out). See docs/SELF_LEARNING.md "Privacy and consent".
     training_data_consent: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # Whether WOW is currently authorized to answer/handle incoming calls on
+    # this user's behalf - written by the enable_call_assistant/
+    # disable_call_assistant agent tools (app/agent/builtin_tools.py), off
+    # by default so automation is always opt-in.
+    call_assistant_enabled: Mapped[bool] = mapped_column(Boolean, default=False)

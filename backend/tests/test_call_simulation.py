@@ -12,6 +12,7 @@ everything except the audio source/sink is the real code path.
 from app.agent.context_profile_repository import InMemoryContextProfileRepository
 from app.agent.orchestrator import WowAgent, build_default_tool_registry
 from app.agent.summary_repository import InMemorySummaryRepository
+from app.agent.user_settings_repository import InMemoryUserSettingsRepository
 from app.brain.state_repository import InMemoryStateRepository
 from app.interfaces.context_engine import ConversationContext
 from app.providers.llm.rule_based import RuleBasedLanguageModelProvider
@@ -29,7 +30,10 @@ async def test_simulated_call_full_lifecycle():
         contact={"id": "contact-1", "name": "Priya", "relationship": "friend"},
     )
     tools = build_default_tool_registry(
-        memory_store, InMemorySummaryRepository(), InMemoryContextProfileRepository()
+        memory_store,
+        InMemorySummaryRepository(),
+        InMemoryContextProfileRepository(),
+        InMemoryUserSettingsRepository(),
     )
     agent = WowAgent(
         RuleBasedLanguageModelProvider(),
@@ -67,7 +71,10 @@ async def test_simulated_call_full_lifecycle():
 async def test_simulated_call_produces_outbound_audio_for_every_turn():
     memory_store = InMemoryMemoryStore()
     tools = build_default_tool_registry(
-        memory_store, InMemorySummaryRepository(), InMemoryContextProfileRepository()
+        memory_store,
+        InMemorySummaryRepository(),
+        InMemoryContextProfileRepository(),
+        InMemoryUserSettingsRepository(),
     )
     agent = WowAgent(
         RuleBasedLanguageModelProvider(),
@@ -95,7 +102,10 @@ async def test_simulated_call_produces_outbound_audio_for_every_turn():
 async def test_simulated_call_turn_count_persists_via_agent_state():
     memory_store = InMemoryMemoryStore()
     tools = build_default_tool_registry(
-        memory_store, InMemorySummaryRepository(), InMemoryContextProfileRepository()
+        memory_store,
+        InMemorySummaryRepository(),
+        InMemoryContextProfileRepository(),
+        InMemoryUserSettingsRepository(),
     )
     agent = WowAgent(
         RuleBasedLanguageModelProvider(),

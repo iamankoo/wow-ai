@@ -4,6 +4,7 @@ provider - no database required. See app/agent/orchestrator.py."""
 from app.agent.context_profile_repository import InMemoryContextProfileRepository
 from app.agent.orchestrator import WowAgent, build_default_tool_registry
 from app.agent.summary_repository import InMemorySummaryRepository
+from app.agent.user_settings_repository import InMemoryUserSettingsRepository
 from app.brain.state_repository import InMemoryStateRepository
 from app.interfaces.context_engine import ConversationContext
 from app.interfaces.feedback import FeedbackRepository, FeedbackStatus, FeedbackSubmission
@@ -19,11 +20,15 @@ def _agent(
     context: ConversationContext | None = None,
     feedback_repository: FeedbackRepository | None = None,
     context_profile_repository: InMemoryContextProfileRepository | None = None,
+    user_settings_repository: InMemoryUserSettingsRepository | None = None,
 ) -> WowAgent:
     memory_store = memory_store or InMemoryMemoryStore()
     summary_repo = InMemorySummaryRepository()
     context_profile_repo = context_profile_repository or InMemoryContextProfileRepository()
-    tools = build_default_tool_registry(memory_store, summary_repo, context_profile_repo)
+    user_settings_repo = user_settings_repository or InMemoryUserSettingsRepository()
+    tools = build_default_tool_registry(
+        memory_store, summary_repo, context_profile_repo, user_settings_repo
+    )
     return WowAgent(
         FakeLLMProvider(response),
         FakeContextEngine(context),
@@ -210,6 +215,56 @@ async def test_set_context_action_without_a_context_mode_fails_cleanly():
         {"tool": "set_context", "success": False, "error": "no_context_mode"}
     ]
     assert ctx_repo.active_name(user_id="u1") is None
+
+
+async def test_high_confidence_collect_message_action_saves_it():
+    memory_store = InMemoryMemoryStore()
+    response = LLMResponse(
+        content="",
+        intent="MESSAGE_FOR_USER",
+        slots={"action": "COLLECT_MESSAGE"},
+        metadata={"confidence": {"intent": 0.9, "action": 0.9}},
+    )
+    agent = _agent(response, memory_store=memory_store)
+    action = await agent.handle_input(
+        user_id="u1", text="Tell him I'll call back tonight", conversation_id="c1"
+    )
+    assert action.payload["tool_results"] == [
+        {"tool": "collect_message", "success": True, "error": None}
+    ]
+    assert memory_store.records[0]["content"] == "Tell him I'll call back tonight"
+
+
+async def test_high_confidence_enable_call_assistant_action_sets_the_flag():
+    user_settings = InMemoryUserSettingsRepository()
+    response = LLMResponse(
+        content="",
+        intent="HANDLE_CALLS",
+        slots={"action": "ENABLE_CALL_ASSISTANT"},
+        metadata={"confidence": {"intent": 0.9, "action": 0.9}},
+    )
+    agent = _agent(response, user_settings_repository=user_settings)
+    action = await agent.handle_input(
+        user_id="u1", text="Please handle my calls from now on", conversation_id="c1"
+    )
+    assert action.payload["tool_results"] == [
+        {"tool": "enable_call_assistant", "success": True, "error": None}
+    ]
+    assert user_settings.is_enabled(user_id="u1") is True
+
+
+async def test_ask_caller_reason_action_gets_a_real_question_not_a_generic_fallback():
+    response = LLMResponse(
+        content="",  # LocalWOWModelProvider-shaped: predicts structure, not free text
+        intent="GENERAL_CONVERSATION",
+        slots={"action": "ASK_CALLER_REASON"},
+        metadata={"confidence": {"intent": 0.9, "action": 0.9}},
+    )
+    agent = _agent(response)
+    action = await agent.handle_input(user_id="u1", text="Hello?", conversation_id="c1")
+    assert action.payload["policy_decision"] == "allow"
+    assert action.payload["tool_results"] == []  # no tool - purely conversational
+    assert action.payload["reply"] == "Could you tell me the reason for your call?"
 
 
 async def test_unknown_caller_transfer_request_hands_off():

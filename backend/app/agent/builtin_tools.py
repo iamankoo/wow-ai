@@ -8,8 +8,9 @@ schema-validated by `Tool.validate` before `run` is ever called.
 from app.agent.context_profile_repository import ContextProfileRepository
 from app.agent.summary_repository import SummaryRepository
 from app.agent.tools import Tool, ToolContext, ToolValidationError
+from app.agent.user_settings_repository import UserSettingsRepository
 from app.brain.taxonomy import CONTEXT_DESCRIPTIONS, ContextMode
-from app.interfaces.memory_store import MemoryStore
+from app.interfaces.memory_store import MemoryStore, MemoryType
 
 
 class SaveMemoryTool(Tool):
@@ -81,3 +82,80 @@ class SetContextTool(Tool):
             contact_id=ctx.contact_id,
         )
         return {"profile_id": profile_id, "context_mode": context_mode}
+
+
+class ClearContextTool(Tool):
+    name = "clear_context"
+    description = "Deactivate the current context profile, reverting to normal availability."
+    schema: dict[str, type] = {}
+
+    def __init__(self, repository: ContextProfileRepository):
+        self._repo = repository
+
+    async def run(self, ctx: ToolContext, arguments: dict) -> dict:
+        cleared = await self._repo.clear_active(user_id=ctx.user_id, contact_id=ctx.contact_id)
+        return {"cleared": cleared}
+
+
+class EnableCallAssistantTool(Tool):
+    name = "enable_call_assistant"
+    description = "Turn on WOW's call-handling automation for the user."
+    schema: dict[str, type] = {}
+
+    def __init__(self, repository: UserSettingsRepository):
+        self._repo = repository
+
+    async def run(self, ctx: ToolContext, arguments: dict) -> dict:
+        found = await self._repo.set_call_assistant_enabled(user_id=ctx.user_id, enabled=True)
+        return {"call_assistant_enabled": True, "user_found": found}
+
+
+class DisableCallAssistantTool(Tool):
+    name = "disable_call_assistant"
+    description = "Turn off WOW's call-handling automation for the user."
+    schema: dict[str, type] = {}
+
+    def __init__(self, repository: UserSettingsRepository):
+        self._repo = repository
+
+    async def run(self, ctx: ToolContext, arguments: dict) -> dict:
+        found = await self._repo.set_call_assistant_enabled(user_id=ctx.user_id, enabled=False)
+        return {"call_assistant_enabled": False, "user_found": found}
+
+
+class CollectMessageTool(Tool):
+    name = "collect_message"
+    description = "Take a message from the caller for the user, stored for later recall."
+    schema = {"content": str}
+
+    def __init__(self, memory_store: MemoryStore):
+        self._store = memory_store
+
+    async def run(self, ctx: ToolContext, arguments: dict) -> dict:
+        memory_id = await self._store.add(
+            user_id=ctx.user_id,
+            content=arguments["content"],
+            contact_id=ctx.contact_id,
+            source_type="caller_message",
+            memory_type=MemoryType.EPISODIC,
+        )
+        return {"memory_id": memory_id}
+
+
+class MarkUrgentTool(Tool):
+    name = "mark_urgent"
+    description = "Flag the current call/message as urgent, stored for the user to see immediately."
+    schema = {"content": str}
+
+    def __init__(self, memory_store: MemoryStore):
+        self._store = memory_store
+
+    async def run(self, ctx: ToolContext, arguments: dict) -> dict:
+        memory_id = await self._store.add(
+            user_id=ctx.user_id,
+            content=f"URGENT: {arguments['content']}",
+            contact_id=ctx.contact_id,
+            source_type="mark_urgent",
+            memory_type=MemoryType.SHORT_TERM,
+        )
+        return {"memory_id": memory_id}

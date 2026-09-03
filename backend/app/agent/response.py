@@ -26,21 +26,37 @@ _FALLBACK_TEMPLATES: dict[PolicyVerdict, str] = {
 _DEFAULT_FALLBACK = "I heard you, but I'm not sure how to respond to that yet."
 _TOOL_FAILURE_FALLBACK = "I tried to do that, but something went wrong on my end - could you try again?"
 
+# Per-action fallback templates for ALLOW-verdict actions that have no tool
+# (see orchestrator._ACTION_TOOL_MAP) because they carry no store side
+# effect - the action itself *is* the reply, not a database write.
+# ASK_CALLER_REASON is the only such action today; NO_ACTION deliberately
+# has none (silence/the model's own content is correct for it).
+_ACTION_TEMPLATES: dict[str, str] = {
+    "ASK_CALLER_REASON": "Could you tell me the reason for your call?",
+}
+
 
 def generate_response(
-    *, llm_content: str | None, verdict: PolicyVerdict, tool_failed: bool = False
+    *,
+    llm_content: str | None,
+    verdict: PolicyVerdict,
+    tool_failed: bool = False,
+    action: str | None = None,
 ) -> str:
     """Pick the text WOW actually says for this turn.
 
     An ALLOW-verdict reply from the language model provider wins when it
-    said anything at all; otherwise fall back to a verdict-specific
-    template so the caller always hears something coherent, never raw
-    structure or a blank string.
+    said anything at all; otherwise fall back to an action-specific
+    template if one exists, then a verdict-specific template, so the
+    caller always hears something coherent, never raw structure or a
+    blank string.
     """
     if verdict == PolicyVerdict.ALLOW:
         if tool_failed:
             return _TOOL_FAILURE_FALLBACK
         if llm_content:
             return llm_content
+        if action and action in _ACTION_TEMPLATES:
+            return _ACTION_TEMPLATES[action]
         return _DEFAULT_FALLBACK
     return _FALLBACK_TEMPLATES.get(verdict, _DEFAULT_FALLBACK)

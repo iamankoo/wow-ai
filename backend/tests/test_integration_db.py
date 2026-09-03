@@ -18,6 +18,7 @@ from app.agent.call_recorder import CallRecorder
 from app.agent.context_profile_repository import SqlContextProfileRepository
 from app.agent.orchestrator import WowAgent, build_default_tool_registry
 from app.agent.summary_repository import SqlSummaryRepository
+from app.agent.user_settings_repository import SqlUserSettingsRepository
 from app.db.base import Base
 from app.interfaces.memory_store import MemoryStatus, MemoryType
 from app.learning.call_retention import CallRetentionPolicy, cleanup_expired_calls
@@ -166,7 +167,10 @@ async def test_simulated_call_persists_call_history_via_recorder(session):
     context_engine = DefaultContextEngine(session, memory_store)
     state_repo = SqlStateRepository(session)
     tools = build_default_tool_registry(
-        memory_store, SqlSummaryRepository(session), SqlContextProfileRepository(session)
+        memory_store,
+        SqlSummaryRepository(session),
+        SqlContextProfileRepository(session),
+        SqlUserSettingsRepository(session),
     )
     agent = WowAgent(RuleBasedLanguageModelProvider(), context_engine, state_repo, tools)
     recorder = CallRecorder(session, SqlSummaryRepository(session))
@@ -222,7 +226,10 @@ async def test_set_context_tool_writes_a_profile_default_context_engine_can_read
     context_engine = DefaultContextEngine(session, memory_store)
     state_repo = SqlStateRepository(session)
     tools = build_default_tool_registry(
-        memory_store, SqlSummaryRepository(session), SqlContextProfileRepository(session)
+        memory_store,
+        SqlSummaryRepository(session),
+        SqlContextProfileRepository(session),
+        SqlUserSettingsRepository(session),
     )
     agent = WowAgent(RuleBasedLanguageModelProvider(), context_engine, state_repo, tools)
 
@@ -262,6 +269,22 @@ async def test_set_context_tool_writes_a_profile_default_context_engine_can_read
     assert built_context.context_profile["name"] == "MEETING"
 
 
+async def test_user_settings_repository_persists_call_assistant_flag(session):
+    user = User(display_name="Aniket", phone_number="+10000000005")
+    session.add(user)
+    await session.flush()
+    await session.commit()
+
+    repo = SqlUserSettingsRepository(session)
+    assert await repo.set_call_assistant_enabled(user_id=str(user.id), enabled=True) is True
+    await session.commit()
+
+    await session.refresh(user)
+    assert user.call_assistant_enabled is True
+
+    assert await repo.set_call_assistant_enabled(user_id=str(uuid.uuid4()), enabled=True) is False
+
+
 async def test_run_simulated_call_rejects_explicit_ids_when_recorder_given(session):
     user = User(display_name="Aniket", phone_number="+10000000003")
     session.add(user)
@@ -271,7 +294,10 @@ async def test_run_simulated_call_rejects_explicit_ids_when_recorder_given(sessi
     memory_store = PgVectorMemoryStore(session)
     context_engine = DefaultContextEngine(session, memory_store)
     tools = build_default_tool_registry(
-        memory_store, SqlSummaryRepository(session), SqlContextProfileRepository(session)
+        memory_store,
+        SqlSummaryRepository(session),
+        SqlContextProfileRepository(session),
+        SqlUserSettingsRepository(session),
     )
     agent = WowAgent(
         RuleBasedLanguageModelProvider(), context_engine, SqlStateRepository(session), tools
