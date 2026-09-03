@@ -567,10 +567,22 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     textAlign: TextAlign.center),
                 const SizedBox(height: 2),
-                trailing ??
-                    Text(subtitle,
-                        style: const TextStyle(color: WowColors.textMuted, fontSize: 9),
-                        textAlign: TextAlign.center),
+                // Fixed-height slot regardless of whether this tile shows
+                // plain subtitle text or a trailing control (the Floating
+                // Button tile's Switch) - keeps all four tiles the same
+                // height instead of the Switch's native size stretching
+                // just that one card taller than its siblings.
+                SizedBox(
+                  height: 24,
+                  child: Center(
+                    child: trailing ??
+                        Text(subtitle,
+                            style: const TextStyle(color: WowColors.textMuted, fontSize: 9),
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis),
+                  ),
+                ),
               ],
             ),
           ),
@@ -583,28 +595,31 @@ class _HomeScreenState extends State<HomeScreen> {
         tile(
           icon: Icons.mic_none,
           color: WowColors.primaryBlue,
-          title: 'Voice Command',
+          title: 'Voice',
           subtitle: 'Talk to WOW',
           onTap: () => _openCommandSheet(voice: true),
         ),
         tile(
           icon: Icons.keyboard_alt_outlined,
           color: WowColors.primaryBlue,
-          title: 'Text Command',
+          title: 'Text',
           subtitle: 'Type a command',
           onTap: () => _openCommandSheet(voice: false),
         ),
         tile(
           icon: Icons.fiber_manual_record,
           color: WowColors.accentPurple,
-          title: 'Floating Button',
+          title: 'WOW Air',
           subtitle: _floatingButtonEnabled ? 'Enabled' : 'Disabled',
-          trailing: Transform.scale(
-            scale: 0.7,
-            child: Switch(
-              value: _floatingButtonEnabled,
-              activeThumbColor: WowColors.primaryBlue,
-              onChanged: _setFloatingButtonEnabled,
+          trailing: SizedBox(
+            height: 22,
+            child: FittedBox(
+              fit: BoxFit.contain,
+              child: Switch(
+                value: _floatingButtonEnabled,
+                activeThumbColor: WowColors.primaryBlue,
+                onChanged: _setFloatingButtonEnabled,
+              ),
             ),
           ),
           onTap: () => _setFloatingButtonEnabled(!_floatingButtonEnabled),

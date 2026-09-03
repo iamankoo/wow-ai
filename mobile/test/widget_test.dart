@@ -54,15 +54,15 @@ void main() {
 
     expect(find.text('Your AI Call Assistant'), findsOneWidget);
     expect(find.text('Choose duration'), findsOneWidget);
-    expect(find.text('Text Command'), findsOneWidget);
+    expect(find.text('Text'), findsOneWidget);
   });
 
-  testWidgets('Text Command opens the real send-to-brain sheet', (tester) async {
+  testWidgets('Text tile opens the real send-to-brain sheet', (tester) async {
     await tester.pumpWidget(WowAiApp(apiClient: _clientReturning(_user(complete: true))));
     await tester.pump(SplashScreen.duration);
     await tester.pump(const Duration(milliseconds: 200));
 
-    await tester.tap(find.text('Text Command'));
+    await tester.tap(find.text('Text'));
     await tester.pumpAndSettle();
 
     expect(find.text('Send to brain'), findsOneWidget);
