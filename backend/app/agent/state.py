@@ -69,6 +69,12 @@ class ConversationState:
     response_text: str | None = None
     policy_decision: str | None = None
     confidence: dict = field(default_factory=dict)
+    # A candidate action the model predicted but was too low-confidence to
+    # act on directly (PolicyVerdict.CLARIFY) - remembered across turns so
+    # the *next* turn's reply can confirm/cancel it deterministically (see
+    # app.agent.confirmation) instead of the suggestion being silently
+    # forgotten and re-derived from scratch. None once resolved either way.
+    pending_action: dict | None = None
     updated_at: str = field(default_factory=_now_iso)
 
     def record_turn(self, speaker: str, text: str) -> None:

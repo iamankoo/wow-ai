@@ -267,6 +267,107 @@ async def test_ask_caller_reason_action_gets_a_real_question_not_a_generic_fallb
     assert action.payload["reply"] == "Could you tell me the reason for your call?"
 
 
+async def test_low_confidence_actionable_prediction_is_confirmed_on_the_next_turn():
+    ctx_repo = InMemoryContextProfileRepository()
+    response = LLMResponse(
+        content="",
+        intent="SET_CONTEXT",
+        slots={"action": "SET_CONTEXT", "context_mode": "MEETING"},
+        # action confidence (0.5) is below the 0.6 threshold - triggers CLARIFY.
+        metadata={"confidence": {"intent": 0.9, "action": 0.5, "context_mode": 0.9}},
+    )
+    agent = _agent(response, context_profile_repository=ctx_repo)
+
+    first = await agent.handle_input(
+        user_id="u1", text="I'm in a meeting", conversation_id="c1"
+    )
+    assert first.payload["policy_decision"] == "clarify"
+    assert first.payload["tool_results"] == []
+    assert ctx_repo.active_name(user_id="u1") is None  # not executed yet
+
+    second = await agent.handle_input(user_id="u1", text="yes", conversation_id="c1")
+    assert second.payload["policy_decision"] == "allow"
+    assert second.payload["tool_results"] == [
+        {"tool": "set_context", "success": True, "error": None}
+    ]
+    assert second.payload["reply"] == "Got it - I've taken care of that."
+    assert ctx_repo.active_name(user_id="u1") == "MEETING"
+
+
+async def test_low_confidence_actionable_prediction_is_cancelled_on_the_next_turn():
+    ctx_repo = InMemoryContextProfileRepository()
+    response = LLMResponse(
+        content="",
+        intent="SET_CONTEXT",
+        slots={"action": "SET_CONTEXT", "context_mode": "MEETING"},
+        metadata={"confidence": {"intent": 0.9, "action": 0.5, "context_mode": 0.9}},
+    )
+    agent = _agent(response, context_profile_repository=ctx_repo)
+
+    await agent.handle_input(user_id="u1", text="I'm in a meeting", conversation_id="c1")
+    second = await agent.handle_input(user_id="u1", text="no", conversation_id="c1")
+
+    assert second.type == "clarification_cancelled"
+    assert second.payload["reply"] == "Okay, I won't do that."
+    assert second.payload["tool_results"] == []
+    assert ctx_repo.active_name(user_id="u1") is None  # never executed
+
+
+async def test_cancelling_a_pending_action_does_not_reach_the_brain_again():
+    call_count = {"n": 0}
+    response = LLMResponse(
+        content="",
+        intent="SET_CONTEXT",
+        slots={"action": "SET_CONTEXT", "context_mode": "MEETING"},
+        metadata={"confidence": {"intent": 0.9, "action": 0.5, "context_mode": 0.9}},
+    )
+
+    class CountingLLMProvider:
+        async def generate(self, messages, *, context=None):
+            call_count["n"] += 1
+            return response
+
+    memory_store = InMemoryMemoryStore()
+    tools = build_default_tool_registry(
+        memory_store,
+        InMemorySummaryRepository(),
+        InMemoryContextProfileRepository(),
+        InMemoryUserSettingsRepository(),
+    )
+    agent = WowAgent(
+        CountingLLMProvider(), FakeContextEngine(), InMemoryStateRepository(), tools
+    )
+
+    await agent.handle_input(user_id="u1", text="I'm in a meeting", conversation_id="c1")
+    assert call_count["n"] == 1
+    await agent.handle_input(user_id="u1", text="no", conversation_id="c1")
+    assert call_count["n"] == 1  # the cancel fast path never called generate() again
+
+
+async def test_unrelated_reply_to_a_pending_action_reprocesses_fresh_instead_of_guessing():
+    ctx_repo = InMemoryContextProfileRepository()
+    response = LLMResponse(
+        content="",
+        intent="SET_CONTEXT",
+        slots={"action": "SET_CONTEXT", "context_mode": "MEETING"},
+        metadata={"confidence": {"intent": 0.9, "action": 0.5, "context_mode": 0.9}},
+    )
+    agent = _agent(response, context_profile_repository=ctx_repo)
+
+    await agent.handle_input(user_id="u1", text="I'm in a meeting", conversation_id="c1")
+    # Not a yes/no - the stale suggestion is abandoned and this is processed
+    # as its own fresh turn (still CLARIFY here, since the fake LLM always
+    # returns the same low-confidence response - the point is it went back
+    # through the brain rather than being force-matched as a confirmation).
+    second = await agent.handle_input(
+        user_id="u1", text="also tell John I called", conversation_id="c1"
+    )
+    assert second.type != "clarification_cancelled"
+    assert second.payload["policy_decision"] == "clarify"
+    assert second.payload["tool_results"] == []
+    assert ctx_repo.active_name(user_id="u1") is None
+
+
 async def test_unknown_caller_transfer_request_hands_off():
     response = LLMResponse(
         content="",

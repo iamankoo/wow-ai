@@ -52,3 +52,21 @@ def test_to_dict_is_json_serializable():
     state = ConversationState.new(user_id="u1", conversation_id="c1")
     state.record_turn("caller", "hello")
     json.dumps(state.to_dict())  # must not raise
+
+
+def test_pending_action_defaults_to_none():
+    state = ConversationState.new(user_id="u1", conversation_id="c1")
+    assert state.pending_action is None
+
+
+def test_pending_action_round_trips_through_to_dict_from_dict():
+    state = ConversationState.new(user_id="u1", conversation_id="c1")
+    state.pending_action = {"action": "SET_CONTEXT", "context_mode": "MEETING", "intent": "SET_CONTEXT"}
+
+    restored = ConversationState.from_dict(state.to_dict())
+
+    assert restored.pending_action == {
+        "action": "SET_CONTEXT",
+        "context_mode": "MEETING",
+        "intent": "SET_CONTEXT",
+    }

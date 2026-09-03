@@ -25,6 +25,13 @@ _FALLBACK_TEMPLATES: dict[PolicyVerdict, str] = {
 
 _DEFAULT_FALLBACK = "I heard you, but I'm not sure how to respond to that yet."
 _TOOL_FAILURE_FALLBACK = "I tried to do that, but something went wrong on my end - could you try again?"
+_CONFIRMED_FALLBACK = "Got it - I've taken care of that."
+
+# Used directly by the orchestrator's clarification-cancellation fast path
+# (a caller rejecting a pending_action never reaches generate_response at
+# all - see WowAgent.handle_input), exported here so every user-facing
+# reply string lives in this one module.
+CANCELLED_ACKNOWLEDGEMENT = "Okay, I won't do that."
 
 # Per-action fallback templates for ALLOW-verdict actions that have no tool
 # (see orchestrator._ACTION_TOOL_MAP) because they carry no store side
@@ -42,20 +49,26 @@ def generate_response(
     verdict: PolicyVerdict,
     tool_failed: bool = False,
     action: str | None = None,
+    confirmed: bool = False,
 ) -> str:
     """Pick the text WOW actually says for this turn.
 
     An ALLOW-verdict reply from the language model provider wins when it
-    said anything at all; otherwise fall back to an action-specific
-    template if one exists, then a verdict-specific template, so the
-    caller always hears something coherent, never raw structure or a
-    blank string.
+    said anything at all; otherwise fall back, in order, to: a fixed
+    acknowledgement if this turn executed a previously-clarified action the
+    caller just confirmed (`confirmed=True` - see the multi-turn
+    clarification loop in `WowAgent.handle_input`), an action-specific
+    template if one exists, then the generic default - so the caller
+    always hears something coherent, never raw structure or a blank
+    string.
     """
     if verdict == PolicyVerdict.ALLOW:
         if tool_failed:
             return _TOOL_FAILURE_FALLBACK
         if llm_content:
             return llm_content
+        if confirmed:
+            return _CONFIRMED_FALLBACK
         if action and action in _ACTION_TEMPLATES:
             return _ACTION_TEMPLATES[action]
         return _DEFAULT_FALLBACK

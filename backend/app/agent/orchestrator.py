@@ -27,10 +27,11 @@ from app.agent.builtin_tools import (
     SaveMemoryTool,
     SetContextTool,
 )
+from app.agent.confirmation import interpret_confirmation
 from app.agent.context_profile_repository import ContextProfileRepository
 from app.agent.user_settings_repository import UserSettingsRepository
 from app.agent.policy import PolicyEngine, PolicyVerdict
-from app.agent.response import generate_response
+from app.agent.response import CANCELLED_ACKNOWLEDGEMENT, generate_response
 from app.agent.state import CallLifecycleStatus, ConversationState
 from app.agent.summary_repository import SummaryRepository
 from app.agent.tools import ToolContext, ToolRegistry
@@ -41,7 +42,7 @@ from app.interfaces.context_engine import ContextEngine
 from app.interfaces.feedback import FeedbackRepository, FeedbackStatus, FeedbackSubmission
 from app.interfaces.llm import LanguageModelProvider, LLMMessage
 from app.interfaces.memory_store import MemoryStore
-from app.learning.confidence import ConfidencePolicy
+from app.learning.confidence import ConfidenceAssessment, ConfidencePolicy
 from app.observability.logging import log_agent_turn
 from app.observability.timing import StageTimings
 
@@ -137,6 +138,27 @@ class WowAgent(AgentRuntime):
         state.current_text = text
         state.record_turn("caller", text)
 
+        # Multi-turn clarification loop: a previous turn may have ended in
+        # PolicyVerdict.CLARIFY with an actionable (just under-confident)
+        # candidate, remembered as state.pending_action. This turn's reply
+        # is checked against it deterministically (see app.agent.confirmation)
+        # before anything is sent back to the brain.
+        pending_action = state.pending_action
+        confirmed = False
+        if pending_action is not None:
+            confirmation = interpret_confirmation(text)
+            if confirmation is False:
+                return await self._resolve_cancelled_clarification(
+                    user_id, conversation_id, state, timings
+                )
+            if confirmation is True:
+                confirmed = True
+            else:
+                # Text didn't read as yes or no - abandon the stale
+                # suggestion and process this turn fresh, rather than
+                # leaving a pending_action lingering indefinitely.
+                state.pending_action = None
+
         state.lifecycle = CallLifecycleStatus.THINKING
         with timings.measure("context"):
             context = await self._context_engine.build_context(
@@ -145,51 +167,69 @@ class WowAgent(AgentRuntime):
         state.contact = context.contact
         state.memory_results = [{"content": m} for m in context.recent_memories]
 
-        with timings.measure("brain"):
-            llm_response = await self._llm.generate(
-                [LLMMessage(role="user", content=text)],
-                context={
-                    "contact": context.contact,
-                    "context_profile": context.context_profile,
-                    "recent_memories": context.recent_memories,
-                },
+        if confirmed:
+            # The caller just confirmed a previously-clarified suggestion -
+            # skip re-classification entirely and treat it as fully
+            # trusted (the explicit human confirmation supersedes the
+            # original low-confidence score that triggered CLARIFY).
+            candidate_action = pending_action.get("action")
+            context_mode = pending_action.get("context_mode")
+            intent = pending_action.get("intent")
+            confidence: dict = {}
+            assessment = ConfidenceAssessment(needs_review=False, low_confidence_heads=[])
+            llm_content: str | None = None
+            state.pending_action = None
+        else:
+            with timings.measure("brain"):
+                llm_response = await self._llm.generate(
+                    [LLMMessage(role="user", content=text)],
+                    context={
+                        "contact": context.contact,
+                        "context_profile": context.context_profile,
+                        "recent_memories": context.recent_memories,
+                    },
+                )
+
+            confidence = (llm_response.metadata or {}).get("confidence", {})
+            assessment = self._confidence_policy.assess(
+                intent_confidence=confidence.get("intent"),
+                context_confidence=confidence.get("context_mode"),
+                action_confidence=confidence.get("action"),
             )
 
-        confidence: dict = (llm_response.metadata or {}).get("confidence", {})
-        assessment = self._confidence_policy.assess(
-            intent_confidence=confidence.get("intent"),
-            context_confidence=confidence.get("context_mode"),
-            action_confidence=confidence.get("action"),
-        )
+            candidate_action = _first_slot(llm_response.slots, "action", "wow_action")
+            if candidate_action is not None and not is_valid_action(candidate_action):
+                # Never trust a prediction outside the known taxonomy, no
+                # matter how confident the model claims to be.
+                candidate_action = None
+            context_mode = _first_slot(llm_response.slots, "context_mode", "wow_context_mode")
+            if context_mode is not None and not is_valid_context(context_mode):
+                context_mode = None
+            intent = llm_response.intent
+            llm_content = llm_response.content
 
-        candidate_action = _first_slot(llm_response.slots, "action", "wow_action")
-        if candidate_action is not None and not is_valid_action(candidate_action):
-            # Never trust a prediction outside the known taxonomy, no
-            # matter how confident the model claims to be.
-            candidate_action = None
-        context_mode = _first_slot(llm_response.slots, "context_mode", "wow_context_mode")
-        if context_mode is not None and not is_valid_context(context_mode):
-            context_mode = None
+            if assessment.needs_review:
+                await self._log_for_review(
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                    text=text,
+                    intent=intent,
+                    context_mode=context_mode,
+                    candidate_action=candidate_action,
+                    confidence=confidence,
+                    model_version=(llm_response.metadata or {}).get("model_version")
+                    or (llm_response.metadata or {}).get("provider"),
+                )
+
         state.candidate_action = candidate_action
         state.context_mode = context_mode
-        state.intent = llm_response.intent
+        state.intent = intent
         state.confidence = confidence
 
-        if assessment.needs_review:
-            await self._log_for_review(
-                user_id=user_id,
-                conversation_id=conversation_id,
-                text=text,
-                intent=llm_response.intent,
-                context_mode=context_mode,
-                candidate_action=candidate_action,
-                confidence=confidence,
-                model_version=(llm_response.metadata or {}).get("model_version")
-                or (llm_response.metadata or {}).get("provider"),
-            )
-
         confidence_values = [v for v in confidence.values() if v is not None]
-        overall_confidence = min(confidence_values) if confidence_values else None
+        overall_confidence = (
+            1.0 if confirmed else (min(confidence_values) if confidence_values else None)
+        )
 
         with timings.measure("policy"):
             decision = self._policy.evaluate(
@@ -199,6 +239,24 @@ class WowAgent(AgentRuntime):
                 contact_known=state.contact is not None,
             )
         state.policy_decision = decision.verdict.value
+
+        if not confirmed:
+            # A fresh (non-confirmed) turn that lands on CLARIFY with an
+            # actionable candidate becomes next turn's pending_action;
+            # anything else clears whatever was there (there shouldn't be
+            # anything left at this point, but never leave a stale entry).
+            if (
+                decision.verdict == PolicyVerdict.CLARIFY
+                and candidate_action
+                and decision.reason != "unrecognized_action"
+            ):
+                state.pending_action = {
+                    "action": candidate_action,
+                    "context_mode": context_mode,
+                    "intent": intent,
+                }
+            else:
+                state.pending_action = None
 
         state.lifecycle = CallLifecycleStatus.RESPONDING
         tool_results: list[dict] = []
@@ -238,10 +296,11 @@ class WowAgent(AgentRuntime):
 
         with timings.measure("response"):
             reply = generate_response(
-                llm_content=llm_response.content,
+                llm_content=llm_content,
                 verdict=decision.verdict,
                 tool_failed=tool_failed,
                 action=candidate_action,
+                confirmed=confirmed,
             )
         state.response_text = reply
         state.record_turn("assistant", reply)
@@ -253,7 +312,7 @@ class WowAgent(AgentRuntime):
         log_agent_turn(
             user_id=user_id,
             conversation_id=conversation_id,
-            intent=llm_response.intent,
+            intent=intent,
             candidate_action=candidate_action,
             policy_decision=decision.verdict.value,
             policy_reason=decision.reason,
@@ -263,7 +322,7 @@ class WowAgent(AgentRuntime):
         )
 
         return AgentAction(
-            type=llm_response.intent or "unknown",
+            type=intent or "unknown",
             payload={
                 "reply": reply,
                 "turn_count": state.turn_count,
@@ -273,6 +332,57 @@ class WowAgent(AgentRuntime):
                 "policy_decision": decision.verdict.value,
                 "policy_reason": decision.reason,
                 "tool_results": tool_results,
+                "lifecycle": state.lifecycle.value,
+                "durations_ms": timings.durations_ms,
+            },
+        )
+
+    async def _resolve_cancelled_clarification(
+        self,
+        user_id: str,
+        conversation_id: str | None,
+        state: ConversationState,
+        timings: StageTimings,
+    ) -> AgentAction:
+        """The caller rejected a pending_action left over from a previous
+        CLARIFY turn (app.agent.confirmation.interpret_confirmation
+        returned False) - there is nothing left to classify or execute this
+        turn, so skip the brain/policy/tool pipeline entirely rather than
+        re-running it only to discard the result."""
+        state.pending_action = None
+        state.candidate_action = None
+        state.policy_decision = PolicyVerdict.ALLOW.value
+        reply = CANCELLED_ACKNOWLEDGEMENT
+        state.response_text = reply
+        state.record_turn("assistant", reply)
+        state.turn_count += 1
+        state.lifecycle = CallLifecycleStatus.LISTENING
+
+        await self._save_state(user_id, conversation_id, state)
+
+        log_agent_turn(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            intent=state.intent,
+            candidate_action=None,
+            policy_decision=PolicyVerdict.ALLOW.value,
+            policy_reason="clarification_cancelled",
+            tool_names=[],
+            tool_success=True,
+            durations_ms=timings.durations_ms,
+        )
+
+        return AgentAction(
+            type="clarification_cancelled",
+            payload={
+                "reply": reply,
+                "turn_count": state.turn_count,
+                "contact": state.contact,
+                "context_profile": None,
+                "candidate_action": None,
+                "policy_decision": PolicyVerdict.ALLOW.value,
+                "policy_reason": "clarification_cancelled",
+                "tool_results": [],
                 "lifecycle": state.lifecycle.value,
                 "durations_ms": timings.durations_ms,
             },

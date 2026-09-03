@@ -3,7 +3,7 @@ outcome, resolved action) and the text WOW actually says - see
 app/agent/response.py."""
 
 from app.agent.policy import PolicyVerdict
-from app.agent.response import generate_response
+from app.agent.response import CANCELLED_ACKNOWLEDGEMENT, generate_response
 
 
 def test_allow_with_llm_content_returns_it_verbatim():
@@ -49,3 +49,26 @@ def test_refuse_verdict_uses_its_own_template():
 def test_handoff_verdict_uses_its_own_template():
     reply = generate_response(llm_content=None, verdict=PolicyVerdict.HANDOFF)
     assert "right person" in reply.lower()
+
+
+def test_confirmed_action_with_no_content_gets_the_confirmed_acknowledgement():
+    reply = generate_response(llm_content=None, verdict=PolicyVerdict.ALLOW, confirmed=True)
+    assert "taken care of" in reply.lower()
+
+
+def test_confirmed_flag_wins_over_action_template():
+    reply = generate_response(
+        llm_content=None, verdict=PolicyVerdict.ALLOW, confirmed=True, action="ASK_CALLER_REASON"
+    )
+    assert "taken care of" in reply.lower()
+
+
+def test_tool_failure_wins_over_confirmed_flag():
+    reply = generate_response(
+        llm_content=None, verdict=PolicyVerdict.ALLOW, confirmed=True, tool_failed=True
+    )
+    assert "something went wrong" in reply.lower()
+
+
+def test_cancelled_acknowledgement_is_a_fixed_exported_string():
+    assert CANCELLED_ACKNOWLEDGEMENT == "Okay, I won't do that."

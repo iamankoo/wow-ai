@@ -425,3 +425,57 @@ that a nonexistent user_id returns `False` rather than raising.
 
 Tests after this block: 173 passed, 10 skipped (was 156/9 - +17 new unit
 tests, +1 new DB-gated integration test). No regressions.
+
+### Block 3: genuinely multi-turn clarification loop
+
+Before this block, `PolicyVerdict.CLARIFY` was single-turn: a
+low-confidence prediction was declined with a generic "could you say that
+again?" and then completely forgotten - the next turn re-derived
+everything from scratch with no memory that a specific action had been
+suggested. This block makes the loop actually multi-turn:
+
+- `app/agent/confirmation.py` (new): `interpret_confirmation(text) ->
+  bool | None` - a small, fixed-vocabulary, fully deterministic yes/no
+  matcher (never a hosted LLM call, same "boring and testable" spirit as
+  `PolicyEngine`/`ConfidencePolicy`). Returns `True`/`False`/`None`
+  (neither - treat as an unrelated fresh turn).
+- `ConversationState.pending_action` (new field, `dict | None`,
+  round-trips through `to_dict`/`from_dict` like every other field): when
+  a fresh turn lands on CLARIFY with an actionable (just
+  under-confident) candidate, `{"action", "context_mode", "intent"}` is
+  remembered here for the next turn.
+- `WowAgent.handle_input` now checks `state.pending_action` before doing
+  anything else:
+  - **affirmative** -> skip the brain call entirely, treat the
+    remembered action as fully trusted (`ConfidenceAssessment(needs_review=False)`,
+    `overall_confidence=1.0` - the explicit human confirmation supersedes
+    the original low score), run it through the same policy+tool
+    pipeline as any other turn. `generate_response` gained a `confirmed`
+    flag and says "Got it - I've taken care of that." rather than a
+    generic fallback.
+  - **negative** -> a new fast path, `_resolve_cancelled_clarification`,
+    skips the brain/policy/tool pipeline entirely (there is nothing left
+    to do) and replies with the fixed `CANCELLED_ACKNOWLEDGEMENT`
+    ("Okay, I won't do that."), exported from `app/agent/response.py` so
+    every user-facing string still lives in one module.
+  - **neither** (unclear reply) -> the stale suggestion is abandoned
+    (`pending_action` cleared) and the turn is reprocessed fresh through
+    the brain, exactly as before this block - never force-matched as a
+    confirmation just because something was pending.
+- Still respects existing safety gates: `PolicyEngine.evaluate` is still
+  called even on a confirmed turn (with `overall_confidence=1.0`), so
+  e.g. `TRANSFER_CALL` from an unrecognized caller still correctly gets a
+  `HANDOFF` verdict rather than being blindly executed just because the
+  caller said "yes".
+
+New tests: `test_confirmation.py` (+26, the full affirmative/negative/
+unrelated/None matrix), `test_agent_state.py` (+2, `pending_action`
+defaults to `None` and round-trips), `test_agent_response.py` (+4, the
+`confirmed` flag and its precedence versus `tool_failed`/action
+templates), `test_agent_orchestrator.py` (+4, full end-to-end through
+`WowAgent`: confirm executes the previously-clarified `SET_CONTEXT`,
+cancel never executes it and never calls the LLM provider again, and an
+unrelated reply reprocesses fresh rather than being misread).
+
+Tests after this block: 209 passed, 10 skipped (was 173/10). No
+regressions.
