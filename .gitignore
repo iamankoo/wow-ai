@@ -19,6 +19,7 @@ mobile/android/.gradle/
 mobile/android/app/build/
 mobile/android/build/
 mobile/android/.kotlin/
+mobile/android/app/src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java
 mobile/ios/Flutter/Flutter.podspec
 mobile/ios/Pods/
 
