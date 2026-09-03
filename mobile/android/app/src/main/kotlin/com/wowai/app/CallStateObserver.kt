@@ -21,6 +21,10 @@ private const val TAG = "WowCallStateObserver"
  * TelephonyCallback (API 31+) replaces the deprecated PhoneStateListener;
  * this project's minSdk is 26, so PhoneStateListener remains the fallback
  * for API 26-30 rather than silently doing nothing on older devices.
+ *
+ * Also the real trigger point for Phase 2 Block 7's auto-answer: a RINGING
+ * transition starts WowAutoAnswer's timer, and any other transition cancels
+ * it - the human already handled the call, so WOW does nothing.
  */
 object CallStateObserver {
     private var started = false
@@ -40,10 +44,11 @@ object CallStateObserver {
             return
         }
 
+        val appContext = context.applicationContext
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             val callback = object : TelephonyCallback(), TelephonyCallback.CallStateListener {
                 override fun onCallStateChanged(state: Int) {
-                    logState(state)
+                    logState(appContext, state)
                 }
             }
             telephonyManager.registerTelephonyCallback(context.mainExecutor, callback)
@@ -53,7 +58,7 @@ object CallStateObserver {
             val listener = object : android.telephony.PhoneStateListener() {
                 @Suppress("DEPRECATION")
                 override fun onCallStateChanged(state: Int, phoneNumber: String?) {
-                    logState(state)
+                    logState(appContext, state)
                 }
             }
             @Suppress("DEPRECATION")
@@ -64,7 +69,7 @@ object CallStateObserver {
         started = true
     }
 
-    private fun logState(state: Int) {
+    private fun logState(context: Context, state: Int) {
         val label = when (state) {
             TelephonyManager.CALL_STATE_IDLE -> "IDLE"
             TelephonyManager.CALL_STATE_RINGING -> "RINGING"
@@ -72,5 +77,11 @@ object CallStateObserver {
             else -> "UNKNOWN($state)"
         }
         Log.i(TAG, "call state -> $label")
+
+        if (state == TelephonyManager.CALL_STATE_RINGING) {
+            WowAutoAnswer.onCallRinging(context)
+        } else {
+            WowAutoAnswer.onCallLeftRinging("call state -> $label")
+        }
     }
 }

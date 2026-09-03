@@ -26,6 +26,7 @@ class UserRead(BaseModel):
     display_name: str
     phone_number: str
     email: str | None = None
+    call_assistant_enabled: bool = False
 
     model_config = {"from_attributes": True}
 

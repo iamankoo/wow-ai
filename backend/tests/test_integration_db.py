@@ -269,6 +269,38 @@ async def test_set_context_tool_writes_a_profile_default_context_engine_can_read
     assert built_context.context_profile["name"] == "MEETING"
 
 
+async def test_get_user_route_reports_call_assistant_enabled_for_real(session):
+    """WowCallScreeningService.kt's real auto-answer timer (Phase 2 Block 7)
+    checks this exact route before ever calling TelecomManager.
+    acceptRingingCall() - it must report the flag SqlUserSettingsRepository
+    actually persisted, through the real ASGI route, not just the ORM."""
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from app.api.deps import get_db
+    from app.api.routes import users
+
+    user = User(display_name="Aniket", phone_number="+10000000006")
+    session.add(user)
+    await session.flush()
+    await session.commit()
+
+    repo = SqlUserSettingsRepository(session)
+    assert await repo.set_call_assistant_enabled(user_id=str(user.id), enabled=True) is True
+    await session.commit()
+
+    app = FastAPI()
+    app.include_router(users.router)
+    app.dependency_overrides[get_db] = lambda: session
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.get(f"/users/{user.id}")
+
+    assert response.status_code == 200
+    assert response.json()["call_assistant_enabled"] is True
+
+
 async def test_user_settings_repository_persists_call_assistant_flag(session):
     user = User(display_name="Aniket", phone_number="+10000000005")
     session.add(user)

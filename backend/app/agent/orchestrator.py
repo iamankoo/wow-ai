@@ -53,12 +53,32 @@ _STATE_KEY = "conversation_state"
 # do not trigger a tool call - either because there is no side effect to
 # perform (ASK_CALLER_REASON is purely conversational, see
 # app.agent.response._ACTION_TEMPLATES; NO_ACTION is a no-op by definition),
-# or because executing them needs real telephony (ANSWER_CALL, TRANSFER_CALL,
-# END_CALL) that does not exist yet in this phase - reporting them without
-# pretending to execute them is the honest option. This is every taxonomy
-# action that can be given a genuine effect without telephony - see
-# docs/implementation-status.md "Agent Core completion" for the full
-# per-action rationale.
+# or because this backend process has no live channel to the originating
+# Android device's telephony stack to execute a call-control action in real
+# time the way a DB-backed tool executes here (Phase 2 Block 7 investigated
+# this precisely):
+#
+#   - ANSWER_CALL: real Android capability (TelecomManager
+#     .acceptRingingCall(), permitted for a normal app holding only
+#     android.permission.ANSWER_PHONE_CALLS since API 28) - but it can only
+#     be invoked from the device process itself, not relayed from here. See
+#     mobile/android/.../WowAutoAnswer.kt for the real, device-side
+#     implementation, gated on this exact backend's User
+#     .call_assistant_enabled (GET /users/{id}) so it stays opt-in.
+#   - END_CALL: android.telecom.TelecomManager#endCall() requires
+#     MODIFY_PHONE_STATE, a signature/privileged permission Android does not
+#     grant to a normal installed app - there is no non-privileged path to
+#     end an in-progress call this app did not originate.
+#   - TRANSFER_CALL: android.telecom.Call#deflect() is only reachable via an
+#     InCallService's Call object; this project deliberately implements
+#     CallScreeningService only, not InCallService/the default-dialer role
+#     (see WowCallScreeningService's class doc), so no Call object is ever
+#     obtained. Real call transfer would require taking on that role, out of
+#     this phase's scope.
+#
+# Reporting these three without pretending to execute them from the backend
+# is the honest option - see docs/implementation-status.md "Agent Core
+# completion" for the full per-action rationale.
 _ACTION_TOOL_MAP: dict[str, str] = {
     Action.SAVE_MEMORY.value: SaveMemoryTool.name,
     Action.CREATE_SUMMARY.value: CreateSummaryTool.name,
