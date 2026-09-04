@@ -1,0 +1,43 @@
+services:
+  - type: web
+    name: wow-ai-backend
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: API_PORT
+        value: 8000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: wow-ai-db
+          property: connectionString
+      - key: MEMORY_EMBEDDING_DIM
+        value: 384
+      - key: SECRET_KEY
+        generateValue: true
+      # Zero-ML-dependency defaults (see docs/DEPLOYMENT.md for the real
+      # local_wow/local_whisper/local_piper upgrade path once the service
+      # is on a plan with enough RAM/disk for them). Never a hosted AI API.
+      - key: MODEL_PROVIDER
+        value: rule_based
+      - key: STT_PROVIDER
+        value: simulated
+      - key: TTS_PROVIDER
+        value: simulated
+      - key: AGENT_RUNTIME
+        value: wow_brain
+      - key: OTP_EXPOSE_DEV_CODE
+        value: "true"
+      - key: CALL_RETENTION_DAYS
+        value: 15
+
+databases:
+  - name: wow-ai-db
+    plan: free
+    postgresMajorVersion: 16
