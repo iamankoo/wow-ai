@@ -1,4 +1,5 @@
 import base64
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -70,6 +71,11 @@ async def send_voice_command(
     VAD -> STT -> agent -> TTS MediaPipeline Block 5 already proved works
     end to end, just reached over HTTP instead of a raw audio stream.
     """
+    try:
+        uuid.UUID(user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="user_id must be a valid UUID") from exc
+
     audio = await request.body()
     if not audio:
         raise HTTPException(status_code=400, detail="Request body must contain raw PCM16 audio")

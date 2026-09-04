@@ -25,6 +25,22 @@ private const val TAG = "WowCallStateObserver"
  * Also the real trigger point for Phase 2 Block 7's auto-answer: a RINGING
  * transition starts WowAutoAnswer's timer, and any other transition cancels
  * it - the human already handled the call, so WOW does nothing.
+ *
+ * Phase 8 environment note (not a code defect - documented honestly rather
+ * than silently worked around): on the Medium_Phone_API_36.1 emulator
+ * image, a call placed via `adb emu gsm call` correctly reaches Telecom
+ * (WowCallScreeningService.onScreenCall fires, and `dumpsys
+ * telephony.registry` correctly reports mCallState=1/RINGING) but neither
+ * TelephonyCallback.CallStateListener nor the legacy PhoneStateListener
+ * (both tested directly against this same call) ever invoke
+ * onCallStateChanged - registration succeeds and logs, but zero callbacks
+ * are delivered for the RINGING transition, so WowAutoAnswer's timer never
+ * starts on this specific image. This looks like an emulator-image-specific
+ * gap in TelephonyManager's callback dispatch for simulated GSM calls, not
+ * a permission or registration bug (both listener types were confirmed
+ * registered with READ_PHONE_STATE already granted). Re-verify on a
+ * physical device or a non-preview emulator system image before relying on
+ * this signal in production.
  */
 object CallStateObserver {
     private var started = false

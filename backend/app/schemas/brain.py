@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime, timezone
 
-from pydantic import BaseModel, computed_field
+from pydantic import BaseModel, computed_field, field_validator
 
 from app.models.user import PreferredLanguage, VoiceGender
 
@@ -11,6 +11,19 @@ class BrainCommandRequest(BaseModel):
     text: str
     conversation_id: str | None = None
     caller_number: str | None = None
+
+    @field_validator("user_id")
+    @classmethod
+    def _user_id_must_be_uuid(cls, value: str) -> str:
+        # Kept as str (not uuid.UUID) so AgentRuntime.handle_input's existing
+        # str contract is untouched - this only turns a malformed user_id
+        # into a clean 422 instead of an unhandled 500 from a downstream
+        # uuid.UUID(...) conversion failing deep in the agent/DB layer.
+        try:
+            uuid.UUID(value)
+        except ValueError as exc:
+            raise ValueError("user_id must be a valid UUID") from exc
+        return value
 
 
 class BrainCommandResponse(BaseModel):

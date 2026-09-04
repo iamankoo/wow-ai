@@ -1,3 +1,4 @@
+import uuid
 from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
@@ -50,7 +51,7 @@ async def create_user(
 
 
 @router.get("/{user_id}", response_model=UserRead)
-async def get_user(user_id: str, session: AsyncSession = Depends(get_db)) -> User:
+async def get_user(user_id: uuid.UUID, session: AsyncSession = Depends(get_db)) -> User:
     result = await session.execute(select(User).where(User.id == user_id))
     user = result.scalars().first()
     if not user:
@@ -61,7 +62,7 @@ async def get_user(user_id: str, session: AsyncSession = Depends(get_db)) -> Use
 
 @router.post("/{user_id}/activation", response_model=UserRead)
 async def set_activation(
-    user_id: str, payload: ActivationRequest, session: AsyncSession = Depends(get_db)
+    user_id: uuid.UUID, payload: ActivationRequest, session: AsyncSession = Depends(get_db)
 ) -> User:
     """Phase 6 Part G - the real endpoint the main screen's ON/OFF power
     button and duration chips call directly. Deterministic by design: the
@@ -90,7 +91,7 @@ async def set_activation(
 
 @router.patch("/{user_id}", response_model=UserRead)
 async def update_user_profile(
-    user_id: str, payload: UserProfileUpdate, session: AsyncSession = Depends(get_db)
+    user_id: uuid.UUID, payload: UserProfileUpdate, session: AsyncSession = Depends(get_db)
 ) -> User:
     """Phase 6 Part C/N - the real profile-edit path the onboarding and
     profile screens save through. Enforces the 18+ requirement server-side

@@ -74,7 +74,7 @@ async def _call_list_items(calls: list[Call], session: AsyncSession) -> list[Cal
 
 @router.get("/users/{user_id}/calls", response_model=list[CallListItem])
 async def list_calls(
-    user_id: str, limit: int = 50, session: AsyncSession = Depends(get_db)
+    user_id: uuid.UUID, limit: int = 50, session: AsyncSession = Depends(get_db)
 ) -> list[CallListItem]:
     stmt = (
         select(Call)
@@ -88,7 +88,7 @@ async def list_calls(
 
 @router.get("/users/{user_id}/calls/today-summary", response_model=CallsTodaySummary)
 async def calls_today_summary(
-    user_id: str, session: AsyncSession = Depends(get_db)
+    user_id: uuid.UUID, session: AsyncSession = Depends(get_db)
 ) -> CallsTodaySummary:
     today_start = datetime.combine(date.today(), datetime.min.time(), tzinfo=timezone.utc)
     stmt = select(Call).where(Call.user_id == user_id, Call.created_at >= today_start)
@@ -107,11 +107,8 @@ async def calls_today_summary(
 
 
 @router.get("/calls/{call_id}", response_model=CallDetail)
-async def get_call(call_id: str, session: AsyncSession = Depends(get_db)) -> CallDetail:
-    try:
-        call = await session.get(Call, uuid.UUID(call_id))
-    except ValueError:
-        call = None
+async def get_call(call_id: uuid.UUID, session: AsyncSession = Depends(get_db)) -> CallDetail:
+    call = await session.get(Call, call_id)
     if call is None:
         raise HTTPException(status_code=404, detail="Call not found")
 
