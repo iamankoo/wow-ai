@@ -23,22 +23,21 @@ services:
         value: 384
       - key: SECRET_KEY
         generateValue: true
-      # MODEL_PROVIDER stays rule_based: Brain v3's real weights (1.56GB -
-      # 3 heads x ~520MB) cannot fit in the free plan's 512MB RAM, measured
-      # directly on disk - not a guess. See docs/DEPLOYMENT.md.
+      # Zero-ML-dependency defaults. Reverted here after a real production
+      # incident (see docs/DEPLOYMENT.md "Free-tier resource ceiling,
+      # measured"): STT_PROVIDER=local_whisper (even the "tiny" model)
+      # loads fine at boot but OOM-crashed the whole process the moment it
+      # actually ran inference on real audio, taking the entire backend
+      # down with it (confirmed live - /health itself stopped responding).
+      # MODEL_PROVIDER=local_wow was never enabled here at all: Brain v3's
+      # real weights measure 1.56GB on disk (3 heads x ~520MB), over 3x
+      # the free plan's entire RAM budget on their own.
       - key: MODEL_PROVIDER
         value: rule_based
-      # Real self-hosted STT/TTS (never a hosted AI API) - both are small
-      # enough to fit the free plan's RAM: faster-whisper's "tiny"
-      # multilingual model quantized int8 (~75MB) and Piper's ONNX voices
-      # (~60-75MB each, loaded lazily on first use, not at boot). See
-      # docs/DEPLOYMENT.md for why MODEL_PROVIDER can't join them here.
       - key: STT_PROVIDER
-        value: local_whisper
-      - key: WHISPER_MODEL_SIZE
-        value: tiny
+        value: simulated
       - key: TTS_PROVIDER
-        value: local_piper
+        value: simulated
       - key: AGENT_RUNTIME
         value: wow_brain
       - key: OTP_EXPOSE_DEV_CODE
