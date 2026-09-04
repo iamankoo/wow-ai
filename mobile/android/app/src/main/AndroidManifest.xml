@@ -30,6 +30,10 @@
          settings screen (Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES),
          same pattern as SYSTEM_ALERT_WINDOW above. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Phase 8: the real "WOW handled a call" notification
+         (NotificationHelper.kt) - a runtime-grantable permission on API 33+
+         only; posting notifications needs no permission on older APIs. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:label="WOW AI"

@@ -58,8 +58,20 @@ private val backgroundExecutor = Executors.newSingleThreadExecutor()
  * for real audio the moment a legitimate capture path exists.
  */
 class WowCallScreeningService : CallScreeningService() {
+    companion object {
+        // Phase 8: the real caller number for whichever call is currently
+        // ringing, so WowAutoAnswer (which the telecom/telephony APIs never
+        // hand a phone number to directly - see CallStateObserver's class
+        // doc) can label the "WOW handled a call" notification honestly
+        // instead of omitting the caller entirely. Single most-recent value
+        // is sufficient - this app only ever has one call ringing at a time.
+        @Volatile
+        var lastRingingCallerNumber: String? = null
+    }
+
     override fun onScreenCall(callDetails: Call.Details) {
         val callerNumber = callDetails.handle?.schemeSpecificPart
+        lastRingingCallerNumber = callerNumber
         Log.i(TAG, "onScreenCall: caller=$callerNumber state=${callDetails.state}")
 
         // Respond promptly - the system enforces a short screening

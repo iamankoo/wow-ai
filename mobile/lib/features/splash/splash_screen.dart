@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../../core/api_client.dart';
 import '../../core/constants.dart';
+import '../../core/notification_bridge.dart';
 import '../../core/wow_theme.dart';
+import '../history/history_screen.dart';
 import '../home/home_screen.dart';
 import '../onboarding/onboarding_flow.dart';
 
@@ -47,9 +49,31 @@ class _SplashScreenState extends State<SplashScreen> {
     }
     if (!mounted) return;
 
-    final destination = (user != null && user['profile_complete'] != true)
-        ? OnboardingFlow(apiClient: widget.apiClient, initialUser: user)
-        : HomeScreen(apiClient: widget.apiClient);
+    // Phase 8: a real tap on the "WOW handled a call" notification
+    // (NotificationHelper.kt) launched/resumed this Activity - go straight
+    // to the real call history rather than Home, but only once profile
+    // setup is actually done (an incomplete profile still needs onboarding
+    // first, same as any other launch). No native platform channel exists
+    // in the widget-test host, so a MissingPluginException there (or any
+    // other channel failure) safely means "not opened from a notification" -
+    // the normal Home/onboarding destination - never routes to history.
+    var openedFromCallNotification = false;
+    try {
+      openedFromCallNotification = await WowNotificationBridge.consumePendingOpenCallHistory();
+    } catch (_) {
+      // See comment above - fall through with the safe default.
+    }
+
+    if (!mounted) return;
+
+    final Widget destination;
+    if (user != null && user['profile_complete'] != true) {
+      destination = OnboardingFlow(apiClient: widget.apiClient, initialUser: user);
+    } else if (openedFromCallNotification) {
+      destination = HistoryScreen(apiClient: widget.apiClient);
+    } else {
+      destination = HomeScreen(apiClient: widget.apiClient);
+    }
 
     Navigator.of(context).pushReplacement(MaterialPageRoute(builder: (_) => destination));
   }

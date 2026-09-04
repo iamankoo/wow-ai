@@ -23,10 +23,12 @@ private const val PHONE_PERMISSIONS_REQUEST_CODE = 4002
 private const val OVERLAY_PERMISSION_REQUEST_CODE = 4003
 private const val INSTALL_PERMISSION_REQUEST_CODE = 4004
 private const val VOICE_PERMISSION_REQUEST_CODE = 4005
+private const val NOTIFICATION_PERMISSION_REQUEST_CODE = 4006
 private const val PERMISSIONS_CHANNEL = "com.wowai.app/permissions"
 private const val OVERLAY_CHANNEL = "com.wowai.app/overlay"
 private const val UPDATE_CHANNEL = "com.wowai.app/update"
 private const val VOICE_CHANNEL = "com.wowai.app/voice"
+private const val NOTIFICATIONS_CHANNEL = "com.wowai.app/notifications"
 
 /**
  * Phase 2 Block 6 + Phase 6 Part D: real Android call integration and the
@@ -79,12 +81,46 @@ class MainActivity : FlutterActivity() {
     private var pendingInstallPermissionResult: MethodChannel.Result? = null
     private var pendingVoicePermissionResult: MethodChannel.Result? = null
     private val voiceRecorder = VoiceRecorder()
+    // Phase 8: set when this Activity was (re)launched by tapping the real
+    // "WOW handled a call" notification (see NotificationHelper) - consumed
+    // (read-then-cleared) by Dart via NOTIFICATIONS_CHANNEL so
+    // splash_screen.dart can route straight to call history instead of the
+    // normal Home/onboarding destination.
+    private var pendingOpenCallHistory = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // Safe to start unconditionally - it's a no-op unless
         // READ_PHONE_STATE is already granted, and registers no dialog.
         CallStateObserver.start(applicationContext)
+        requestNotificationPermissionIfNeeded()
+        consumeOpenCallHistoryIntent(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // launchMode="singleTop" (see AndroidManifest.xml) means a
+        // notification tap while the Activity is already running arrives
+        // here instead of a fresh onCreate() - handle both paths.
+        consumeOpenCallHistoryIntent(intent)
+    }
+
+    private fun consumeOpenCallHistoryIntent(intent: Intent) {
+        if (intent.action == ACTION_OPEN_CALL_HISTORY) {
+            pendingOpenCallHistory = true
+        }
+    }
+
+    /** Fire-and-forget: notification permission has no meaningful
+     * "denied, now what" flow here (NotificationHelper simply skips posting
+     * if it's absent), so this doesn't need the pendingXResult tracking the
+     * other permissions use. */
+    private fun requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        if (hasPermission(android.Manifest.permission.POST_NOTIFICATIONS)) return
+        ActivityCompat.requestPermissions(
+            this, arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST_CODE
+        )
     }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
@@ -119,6 +155,17 @@ class MainActivity : FlutterActivity() {
                     "hasInstallPermission" -> result.success(packageManager.canRequestPackageInstalls())
                     "requestInstallPermission" -> requestInstallPermission(result)
                     "installApk" -> installApk(call.argument<String>("path"), result)
+                    else -> result.notImplemented()
+                }
+            }
+        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, NOTIFICATIONS_CHANNEL)
+            .setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "consumePendingOpenCallHistory" -> {
+                        val pending = pendingOpenCallHistory
+                        pendingOpenCallHistory = false
+                        result.success(pending)
+                    }
                     else -> result.notImplemented()
                 }
             }

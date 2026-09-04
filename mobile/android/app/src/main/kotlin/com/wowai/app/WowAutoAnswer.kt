@@ -167,6 +167,11 @@ object WowAutoAnswer {
         try {
             telecomManager.acceptRingingCall()
             Log.i(TAG, "WOW auto-answered the call via TelecomManager.acceptRingingCall()")
+            // Phase 8: the real "WOW handled a call" notification - fired
+            // only here, the actual auto-answer moment, not on every merely
+            // screened call (WowCallScreeningService.onScreenCall runs for
+            // ALL calls regardless of whether WOW ends up taking them).
+            NotificationHelper.notifyCallHandled(context, WowCallScreeningService.lastRingingCallerNumber)
         } catch (e: SecurityException) {
             Log.e(TAG, "acceptRingingCall() denied: ${e.message}")
         }
