@@ -57,7 +57,10 @@ private const val AUTO_ANSWER_DELAY_MS = 10_000L
  * against the real Postgres-backed endpoint before this run.
  */
 object WowAutoAnswer {
-    private const val BACKEND_BASE_URL = "http://10.0.2.2:8000"
+    // Phase 7 Block 2: per-build-type value (debug -> 10.0.2.2, release ->
+    // the deployed Render backend) - see build.gradle.kts and
+    // docs/DEPLOYMENT.md - not a hardcoded laptop address.
+    private val BACKEND_BASE_URL = BuildConfig.BACKEND_BASE_URL
     // Matches WowCallScreeningService.DEMO_USER_ID / home_screen.dart's
     // kDemoUserId - no real account system exists yet (Phase 1).
     private const val DEMO_USER_ID = "00000000-0000-0000-0000-000000000001"

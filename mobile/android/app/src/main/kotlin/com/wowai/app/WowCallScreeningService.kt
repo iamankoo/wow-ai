@@ -10,13 +10,13 @@ import java.util.concurrent.Executors
 
 private const val TAG = "WowCallScreeningService"
 
-// Matches mobile/lib/main.dart's kDefaultBackendBaseUrl - 10.0.2.2 is the
-// Android emulator's well-known alias for the host machine's localhost.
-// Duplicated here (not shared with Dart) because this service can run
-// even when no FlutterEngine/Activity is alive - see class doc below for
-// why this integration is native Kotlin rather than a MethodChannel call
-// into Dart.
-private const val BACKEND_BASE_URL = "http://10.0.2.2:8000"
+// Matches mobile/lib/main.dart's kDefaultBackendBaseUrl - per-build-type
+// value from BuildConfig (debug -> 10.0.2.2, release -> the deployed
+// Render backend, see build.gradle.kts and docs/DEPLOYMENT.md). Read here
+// rather than shared with Dart because this service can run even when no
+// FlutterEngine/Activity is alive - see class doc below for why this
+// integration is native Kotlin rather than a MethodChannel call into Dart.
+private val BACKEND_BASE_URL = BuildConfig.BACKEND_BASE_URL
 
 // Matches HomeScreen.dart's kDemoUserId - no real account system exists yet
 // (Phase 1). Must be a real UUID: every backend user_id column (Contact,
