@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.telecom.TelecomManager
+import android.telephony.TelephonyManager
 import android.util.Log
 import androidx.core.content.ContextCompat
 import org.json.JSONObject
@@ -162,6 +163,21 @@ object WowAutoAnswer {
         val telecomManager = context.getSystemService(Context.TELECOM_SERVICE) as? TelecomManager
         if (telecomManager == null) {
             Log.w(TAG, "TelecomManager unavailable")
+            return
+        }
+        // Phase 8 physical-device fix: acceptRingingCall() silently does
+        // nothing if the call isn't in STATE_RINGING any more (confirmed
+        // live - a human answering within the window left this call still
+        // "succeeding" by the old code's own logging/notification, which
+        // was dishonest: WOW hadn't actually done anything). Check the
+        // real call state first so both the log line and the "WOW handled
+        // a call" notification only fire when WOW genuinely took the call.
+        @Suppress("DEPRECATION")
+        val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as? TelephonyManager
+        @Suppress("DEPRECATION")
+        val stillRinging = telephonyManager?.callState == TelephonyManager.CALL_STATE_RINGING
+        if (!stillRinging) {
+            Log.i(TAG, "Not answering: call is no longer RINGING (a human already handled it)")
             return
         }
         try {

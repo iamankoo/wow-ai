@@ -56,6 +56,19 @@ private val backgroundExecutor = Executors.newSingleThreadExecutor()
  * privileged-audio-access path or accepting this as a standing platform
  * constraint; app/media/pipeline.py (Block 5) is already real and ready
  * for real audio the moment a legitimate capture path exists.
+ *
+ * Phase 8 physical-device fix: this is now also WowAutoAnswer's primary
+ * trigger. Previously only CallStateObserver's TelephonyCallback (running
+ * in MainActivity's process) started the auto-answer timer - reliable on
+ * an emulator with the app foregrounded, but confirmed failing on a real
+ * device (Vivo/FuntouchOS 13, three consecutive real calls) because
+ * Android kills the backgrounded Activity process, silently dropping that
+ * listener registration with it. onScreenCall() doesn't have that problem:
+ * Android's Telecom subsystem binds this Service fresh per call regardless
+ * of process state - confirmed firing 3/3 times in the same real test -
+ * so it's the reliable place to start the timer from. CallStateObserver
+ * still starts/cancels it too when the app happens to be foregrounded
+ * (harmless - onCallRinging() just restarts the same pending timer).
  */
 class WowCallScreeningService : CallScreeningService() {
     companion object {
@@ -86,6 +99,14 @@ class WowCallScreeningService : CallScreeningService() {
             .setSkipNotification(false)
             .build()
         respondToCall(callDetails, response)
+
+        // Phase 8: the reliable auto-answer trigger - see class doc. Must
+        // run on the main looper (WowAutoAnswer posts its delayed check via
+        // Handler(Looper.getMainLooper())); onScreenCall itself isn't
+        // guaranteed to run on the main thread, so hop explicitly.
+        android.os.Handler(android.os.Looper.getMainLooper()).post {
+            WowAutoAnswer.onCallRinging(applicationContext)
+        }
 
         // Backend integration is fire-and-forget on a background thread -
         // must never block/delay respondToCall() above.
