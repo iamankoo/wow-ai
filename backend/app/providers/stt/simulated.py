@@ -13,6 +13,17 @@ have already transcribed from actual audio. `feed()` treats each chunk as
 one partial transcript update; `close()` (or a chunk ending in punctuation)
 produces the final result. This is deliberately simple and inspectable,
 not a signal-processing simulation.
+
+Production note: when STT_PROVIDER=simulated is deployed behind
+/brain/voice-command (see docs/DEPLOYMENT.md - the zero-dependency default
+for a Render free-tier deployment), real callers send real raw PCM16
+microphone bytes, not UTF-8 text - decoding those as UTF-8 fails for
+almost any real audio (confirmed live: UnicodeDecodeError on byte 0xa9).
+That's expected - this provider never claims to transcribe real speech -
+but it must fail *honestly* (no transcript, same as "STT heard nothing"),
+never with an unhandled 500. Real speech transcription requires actually
+switching STT_PROVIDER to local_whisper (already implemented, see
+local_whisper.py) on a plan with enough RAM.
 """
 
 from app.interfaces.stt import STTStreamSession, SpeechToTextProvider, TranscriptionResult
@@ -28,7 +39,13 @@ class SimulatedSTTStreamSession(STTStreamSession):
     async def feed(self, audio_chunk: bytes) -> TranscriptionResult | None:
         if self._closed:
             raise RuntimeError("feed() called after close()")
-        text = audio_chunk.decode("utf-8").strip()
+        try:
+            text = audio_chunk.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            # Real (non-simulated) audio bytes, not the fake "text-as-audio"
+            # convention this provider expects - honestly "no words heard",
+            # never a crash. See module doc's production note.
+            return None
         if not text:
             return None
         self._buffer.append(text)
@@ -50,7 +67,13 @@ class SimulatedSTTStreamSession(STTStreamSession):
 
 class SimulatedSTTProvider(SpeechToTextProvider):
     async def transcribe(self, audio: bytes, *, sample_rate: int = 16000) -> TranscriptionResult:
-        return TranscriptionResult(text=audio.decode("utf-8").strip(), is_final=True, confidence=0.99)
+        try:
+            text = audio.decode("utf-8").strip()
+        except UnicodeDecodeError:
+            # See module doc's production note - real mic audio isn't valid
+            # UTF-8; that's an honest "no words heard", never a crash.
+            text = ""
+        return TranscriptionResult(text=text, is_final=True, confidence=0.99)
 
     async def start_stream(self, *, sample_rate: int = 16000) -> STTStreamSession:
         _ = sample_rate
