@@ -23,15 +23,22 @@ services:
         value: 384
       - key: SECRET_KEY
         generateValue: true
-      # Zero-ML-dependency defaults (see docs/DEPLOYMENT.md for the real
-      # local_wow/local_whisper/local_piper upgrade path once the service
-      # is on a plan with enough RAM/disk for them). Never a hosted AI API.
+      # MODEL_PROVIDER stays rule_based: Brain v3's real weights (1.56GB -
+      # 3 heads x ~520MB) cannot fit in the free plan's 512MB RAM, measured
+      # directly on disk - not a guess. See docs/DEPLOYMENT.md.
       - key: MODEL_PROVIDER
         value: rule_based
+      # Real self-hosted STT/TTS (never a hosted AI API) - both are small
+      # enough to fit the free plan's RAM: faster-whisper's "tiny"
+      # multilingual model quantized int8 (~75MB) and Piper's ONNX voices
+      # (~60-75MB each, loaded lazily on first use, not at boot). See
+      # docs/DEPLOYMENT.md for why MODEL_PROVIDER can't join them here.
       - key: STT_PROVIDER
-        value: simulated
+        value: local_whisper
+      - key: WHISPER_MODEL_SIZE
+        value: tiny
       - key: TTS_PROVIDER
-        value: simulated
+        value: local_piper
       - key: AGENT_RUNTIME
         value: wow_brain
       - key: OTP_EXPOSE_DEV_CODE
