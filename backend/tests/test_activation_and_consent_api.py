@@ -21,7 +21,7 @@ from app.models.user import User
 
 @pytest.fixture
 async def client(tmp_path, monkeypatch):
-    monkeypatch.delenv("API_ACCESS_KEY", raising=False)
+    monkeypatch.setenv("API_ACCESS_KEY", "")
     get_settings.cache_clear()
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'a.db'}", future=True)
     async with engine.begin() as conn:

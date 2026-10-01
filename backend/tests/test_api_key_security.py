@@ -97,7 +97,7 @@ async def test_plivo_answer_is_not_behind_the_api_key_it_uses_plivo_signatures(c
 
 
 async def test_key_is_not_enforced_when_unset_for_backward_compatibility(client, monkeypatch):
-    monkeypatch.delenv("API_ACCESS_KEY", raising=False)
+    monkeypatch.setenv("API_ACCESS_KEY", "")
     get_settings.cache_clear()
     resp = await client.get(f"/users/{uuid.uuid4()}")
     assert resp.status_code == 404
@@ -233,3 +233,43 @@ async def test_one_failed_turn_does_not_end_the_live_call_but_three_in_a_row_do(
     pipeline._stt = FlakySTT({1, 2, 3})
     with pytest.raises(RuntimeError):
         [t async for t in pipeline.stream_call_audio(user_id=str(uuid.uuid4()), audio_chunks=chunks(5))]
+
+
+# --- log redaction of the stream token (found by the live rehearsal) ---------------
+
+
+def test_uvicorn_style_log_lines_never_carry_the_stream_token(caplog):
+    import logging
+
+    from app.security import RedactStreamTokenFilter
+
+    logger = logging.getLogger("uvicorn.error")
+    handler_records = []
+
+    class _H(logging.Handler):
+        def emit(self, record):
+            handler_records.append(record.getMessage())
+
+    h = _H()
+    h.addFilter(RedactStreamTokenFilter())
+    logger.addHandler(h)
+    logger.setLevel(logging.INFO)
+    try:
+        logger.info("%s - \"WebSocket %s\" [accepted]", ("127.0.0.1", 1), "/telephony/plivo/stream?token=abcDEF123_-xyz")
+        logger.info("GET /x?a=1&token=SECRETVALUE&b=2")
+    finally:
+        logger.removeHandler(h)
+    joined = " ".join(handler_records)
+    assert "abcDEF123" not in joined and "SECRETVALUE" not in joined
+    assert joined.count("token=[REDACTED]") == 2
+    assert "a=1" in joined and "b=2" in joined  # only the token value is touched
+
+
+def test_log_redaction_is_installed_on_the_apps_uvicorn_loggers():
+    import logging
+
+    import app.main  # noqa: F401
+    from app.security import RedactStreamTokenFilter
+
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        assert any(isinstance(f, RedactStreamTokenFilter) for f in logging.getLogger(name).filters)

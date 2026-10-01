@@ -367,6 +367,9 @@ async def _run_stream(
         call, conversation = await recorder.start_call(
             user_id=user_id, caller_number=state["caller_number"], direction=CallDirection.INBOUND
         )
+        # Commit now (not only at teardown): the agent's own DB session writes
+        # rows with a foreign key to this conversation - see CallRecorder.commit.
+        await recorder.commit()
 
         # Greet first, via the real Piper stack, before consuming any
         # caller audio - matches the milestone's "caller hears Hello
@@ -410,6 +413,7 @@ async def _run_stream(
                         text=reply_text,
                         language=turn.language,
                     )
+                await recorder.commit()  # history survives a crash; keeps the transaction short
                 if turn.reply_audio:
                     await provider.send_audio(
                         call_id, turn.reply_audio, sample_rate=turn.reply_sample_rate
@@ -445,6 +449,7 @@ async def _run_stream(
                 await recorder.end_call(
                     call=call, conversation=conversation, summary_text=summary_text
                 )
+                await recorder.commit()
                 notify_call_handled(
                     caller_number=state["caller_number"],
                     duration_seconds=duration,

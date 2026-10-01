@@ -15,6 +15,7 @@ from each other, which belongs to the real account system (Phase 3).
 
 import hmac
 import logging
+import re
 
 from fastapi import Header, HTTPException
 
@@ -33,6 +34,34 @@ async def require_api_key(x_wow_api_key: str | None = Header(default=None)) -> N
         return
     if not x_wow_api_key or not hmac.compare_digest(x_wow_api_key, expected):
         raise HTTPException(status_code=401, detail="Missing or invalid API key")
+
+
+_TOKEN_QUERY = re.compile(r"([?&]token=)[A-Za-z0-9_\-]+")
+
+
+class RedactStreamTokenFilter(logging.Filter):
+    """uvicorn's own access/error loggers print the full request URL
+    (`WebSocket /telephony/plivo/stream?token=...`). The stream token is
+    single-use and short-lived, but it is still a credential-shaped value
+    that must not sit in logs (found by the Phase 1 live rehearsal) - so any
+    `token=` query value is replaced before the record is emitted."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 - never break logging
+            return True
+        redacted = _TOKEN_QUERY.sub(lambda m: m.group(1) + "[REDACTED]", message)
+        if redacted != message:
+            record.msg, record.args = redacted, ()
+        return True
+
+
+def install_log_redaction() -> None:
+    for name in ("uvicorn", "uvicorn.access", "uvicorn.error"):
+        target = logging.getLogger(name)
+        if not any(isinstance(f, RedactStreamTokenFilter) for f in target.filters):
+            target.addFilter(RedactStreamTokenFilter())
 
 
 def validate_security_config(settings: Settings) -> None:

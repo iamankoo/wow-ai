@@ -42,9 +42,14 @@ class FakeRecorder:
         self.turns: list[dict] = []
         self.ended: list[str | None] = []
         self.rolled_back = False
+        self.events: list[str] = []
+
+    async def commit(self):
+        self.events.append("commit")
 
     async def start_call(self, *, user_id, caller_number, direction):
         self.started.append(caller_number)
+        self.events.append("start")
         return SimpleNamespace(id=uuid.uuid4()), SimpleNamespace(id=uuid.uuid4())
 
     async def record_turn(self, **kwargs):
@@ -143,6 +148,19 @@ def test_valid_token_connects_greets_records_and_cleans_up():
     assert recorder.started == ["+919876543210"]
     assert len(recorder.ended) == 1
     assert [t["speaker"].value for t in recorder.turns] == ["assistant"]  # the greeting
+
+
+def test_conversation_is_committed_right_after_start_so_the_agents_own_session_can_reference_it():
+    """Regression: found by the live rehearsal on real Postgres (see
+    test_call_recorder_cross_session_fk.py) - the commit must come straight
+    after start_call, before any turn is processed."""
+    client, recorder, _ = _client(pipeline=FakePipeline("turn"))
+    with client.websocket_connect(authorized_stream_path("call-A")) as ws:
+        ws.send_text(_start_event("call-A"))
+        ws.receive_text()
+        ws.receive_text()
+    assert recorder.events[:2] == ["start", "commit"]
+    assert recorder.events.count("commit") >= 3  # after start, after the turn, after end_call
 
 
 def test_missing_token_is_rejected_before_anything_runs():

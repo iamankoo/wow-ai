@@ -76,6 +76,16 @@ class CallRecorder:
         self._session.add(segment)
         await self._session.flush()
 
+    async def commit(self) -> None:
+        """Makes everything recorded so far visible to OTHER database
+        sessions. Required mid-call: WowAgent writes through its own session
+        (agent_states / feedback_events / memories) and those tables hold a
+        foreign key to `conversations`, so on real Postgres the Conversation
+        row must be committed before the agent's first write - found by the
+        Phase 1 live-validation rehearsal (SQLite/in-memory tests cannot see
+        it). Also means a crash mid-call keeps the history recorded so far."""
+        await self._session.commit()
+
     async def rollback(self) -> None:
         """Discards this recorder's pending (failed) transaction so a
         poisoned session can't also break the dependency's final commit."""

@@ -157,7 +157,7 @@ async def test_answer_webhook_uses_wss_when_public_base_url_is_https(tmp_path, m
         assert resp.status_code == 200
         assert "wss://example.trycloudflare.com/telephony/plivo/stream?token=" in resp.text
     finally:
-        monkeypatch.delenv("PUBLIC_BASE_URL", raising=False)
+        monkeypatch.setenv("PUBLIC_BASE_URL", "")
         get_settings.cache_clear()
 
 
@@ -207,7 +207,7 @@ async def test_answer_webhook_rejects_an_invalid_signature_when_auth_token_is_co
         await engine.dispose()
         assert resp.status_code == 403
     finally:
-        monkeypatch.delenv("PLIVO_AUTH_TOKEN", raising=False)
+        monkeypatch.setenv("PLIVO_AUTH_TOKEN", "")
         get_settings.cache_clear()
 
 
@@ -224,7 +224,7 @@ async def test_answer_webhook_rejects_missing_signature_headers_when_auth_token_
         await engine.dispose()
         assert resp.status_code == 403
     finally:
-        monkeypatch.delenv("PLIVO_AUTH_TOKEN", raising=False)
+        monkeypatch.setenv("PLIVO_AUTH_TOKEN", "")
         get_settings.cache_clear()
 
 
@@ -249,7 +249,7 @@ async def test_answer_webhook_accepts_a_real_valid_signature(tmp_path, monkeypat
         assert resp.status_code == 200
         assert "<Stream" in resp.text
     finally:
-        monkeypatch.delenv("PLIVO_AUTH_TOKEN", raising=False)
+        monkeypatch.setenv("PLIVO_AUTH_TOKEN", "")
         get_settings.cache_clear()
 
 

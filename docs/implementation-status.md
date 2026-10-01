@@ -1371,3 +1371,32 @@ Authoritative detail: `docs/SECURITY.md`; procedure: `docs/PLIVO_TESTING.md`.
 Still NOT done / not proven: a real external Plivo call; Plivo's inbound JSON
 shape and query-string behaviour; whether `end_call` hangs up the PSTN call;
 per-user auth; production key enforcement; Business mode.
+
+## Phase 1 live-validation rehearsal findings (2026-10-01)
+
+Before the first real Plivo call, the real backend (real faster-whisper, Brain
+v3, WowAgent, Piper, Postgres+pgvector) was driven over real sockets by a
+simulated caller (a REHEARSAL - not the live gate; no Plivo call was made).
+It found two real defects the automated suite could not, both fixed:
+
+- **Cross-session foreign key (would have killed the first real call).**
+  `CallRecorder` created the `Conversation` in a transaction that only
+  committed at call end, while WowAgent writes `agent_states`/`feedback_events`
+  through its own session with a foreign key to it. On Postgres the first turn
+  raised ForeignKeyViolation, poisoned the agent session, and three failed
+  turns ended the call. Fix: commit right after `start_call`, after each turn
+  and after `end_call` (`CallRecorder.commit`). Regression:
+  `tests/test_call_recorder_cross_session_fk.py` (Postgres) + an ordering test.
+- **Stream token in logs.** uvicorn's access log printed the full
+  `WebSocket /telephony/plivo/stream?token=...` URL. A logging filter now
+  redacts `token=` values (`app/security.py`).
+- Test hygiene: tests no longer pick up a developer's git-ignored
+  `backend/.env` (`tests/conftest.py` pins a baseline).
+
+Rehearsal result: 27/27 checks (auth boundary, signed webhook with URL rebuilt
+from PUBLIC_BASE_URL, token missing/invalid/mismatch/replay rejected, junk and
+outbound frames ignored, English + Hindi + switch-back turns answered with audio,
+transcript/language/summary persisted, OFF hangs up). Measured per-turn latency
+on this PC's CPU: STT 1.8-2.8 s, agent (Brain v3, 3 heads) 0.2-2.0 s, TTS 0.3-0.8 s
+(3.1 s first Hindi voice load), total 2.4-3.9 s for English turns, 7.9 s for the
+first Hindi turn. Language detection ~0 ms.

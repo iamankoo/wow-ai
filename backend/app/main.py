@@ -19,7 +19,7 @@ from app.api.routes import (
 from app.config import get_settings
 from app.db.base import Base
 from app.db.session import engine
-from app.security import require_api_key, validate_security_config
+from app.security import install_log_redaction, require_api_key, validate_security_config
 
 
 async def create_tables(engine: AsyncEngine) -> None:
@@ -43,6 +43,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
+install_log_redaction()
 _settings = get_settings()
 # The interactive docs/OpenAPI schema enumerate every route - not served when
 # the API is key-protected or publicly tunnelled.
