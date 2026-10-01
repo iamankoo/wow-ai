@@ -13,6 +13,10 @@
 > PROVEN LIVE (exercised for real on real hardware/network) · NOT VERIFIED ·
 > NOT IMPLEMENTED · BLOCKED.
 >
+> 📍 **Where we stopped (2026-10-02):** see **"End-of-Day Checkpoint — 2026-10-02"** and
+> **"NEXT SESSION — CONTINUE FROM HERE"** near the end of this file (before §29).
+> **CONTINUE FROM PLIVO KYC / PHONE NUMBER SETUP.**
+>
 > ⚠️ **`Phases.md` is NOT in this repository.** The instructions that asked for
 > this file refer to a `Phases.md`, but no such file exists in `wow-ai`
 > (`git ls-files` has none; searching the machine found copies only in
@@ -634,7 +638,7 @@ Launch gate: free-form natural conversation decision, production hosting, load/s
 | | Status |
 |---|---|
 | **Phase 1 implementation** | **COMPLETE** (commit `3a0aa84`, fixes `2e2e5dd`) |
-| **Phase 1 live validation** | **IN PROGRESS / NOT YET VERIFIED** — no real Plivo call has been made; waiting on local credential entry and Plivo console configuration (§23) |
+| **Phase 1 live validation** | **NOT CLOSED** — no real Plivo call has been made; credentials are now present locally and the Default application's Answer URL is set, but **business KYC / an Indian phone number is still required** (see the 2026-10-02 checkpoint) |
 | Phase 2 | **NOT STARTED** |
 
 Phase 1 must **not** be called CLOSED until a real external phone call proves the bridge end to end.
@@ -644,7 +648,7 @@ Phase 1 must **not** be called CLOSED until a real external phone call proves th
 Prepared already: backend `.env` (git-ignored) with `API_ACCESS_KEY` generated and non-secret provider
 settings; local Postgres container for the test database; a Cloudflare quick tunnel; rehearsal passed.
 Still required, in order:
-1. Owner enters `PLIVO_AUTH_ID` and `PLIVO_AUTH_TOKEN` in `backend/.env` (never in chat/git).
+1. ~~Owner enters `PLIVO_AUTH_ID` and `PLIVO_AUTH_TOKEN` in `backend/.env`~~ — **DONE (2026-10-02, present locally; never in chat/git).** **New blocker: Plivo business KYC / Indian number — see the 2026-10-02 checkpoint.**
 2. Plivo console: an XML Application whose **Answer URL** = `<PUBLIC_BASE_URL>/telephony/plivo/answer`
    (POST), the Plivo number attached to it, Audio Streaming enabled — owner performs/confirm labels.
 3. Start the backend with real providers and `PUBLIC_BASE_URL` = tunnel; activate WOW (1 h).
@@ -733,10 +737,111 @@ concurrency; installed-app update path with the API key; legal/telecom complianc
   XML Application, (for Neon check) Neon access, (for the app) a build with `WOW_API_KEY`.
 - 📚 Docs: `summary.md`, `README.md`, `docs/*`, `docs/SECURITY.md`, `docs/PLIVO_TESTING.md`, `render.yaml`.
 
+## End-of-Day Checkpoint — 2026-10-02
+
+**Source of facts:** repository state and local checks on 2026-10-02, plus what the project owner reported
+from the Plivo dashboard (the dashboard itself was not visible to the coding agent — those items are
+owner-reported, not independently observed). No secret values appear in this file.
+
+### Status
+| Item | Status |
+|---|---|
+| Phase 1 implementation | **COMPLETE** |
+| Phase 1 live validation gate | **NOT CLOSED** |
+| Real Plivo call | **NOT MADE** |
+| Plivo Answer webhook | **NOT LIVE-VERIFIED** (only exercised locally with a simulated, correctly-signed request) |
+| WebSocket stream | **NOT LIVE-VERIFIED** |
+| Real caller audio through Plivo | **NOT VERIFIED** |
+| English / Hindi / Hinglish through real Plivo | **NOT VERIFIED** |
+| Real-device privacy validation | **NOT COMPLETE** |
+| Neon production migration | **NOT DIRECTLY VERIFIED** (inferred from production behaviour only, §11/§17) |
+| Phase 2 | **NOT STARTED** |
+
+### Latest commits (all authored/committed as `iamankoo <aniketraj00384@gmail.com>`, no attribution trailers)
+- `3a0aa841ec41675bdb98cfd211e45e0e6d1bd16c` — Phase 1 implementation
+- `2e2e5dd` — Phase 1 live-rehearsal fixes (conversation commit mid-call; stream-token log redaction)
+- `3b8a4ec` — `summary.md` created
+- (this checkpoint is committed on top of `3b8a4ec`; `git log -3` shows the exact hash)
+
+### Local credential configuration (verified 2026-10-02; values never read into this file)
+- `backend/.env` is **git-ignored and untracked** (verified).
+- `PLIVO_AUTH_ID` = **PRESENT**; `PLIVO_AUTH_TOKEN` = **PRESENT**; `API_ACCESS_KEY` = present (generated locally).
+- Secrets exposed anywhere (git, logs, this file, reports): **NO**.
+
+### Plivo dashboard state (owner-reported)
+- **Plivo account:** exists; credentials were obtained and entered locally.
+- **Application:** the existing **Default** Plivo application.
+- **Answer URL configured:** `https://project-reflect-inspections-subscribers.trycloudflare.com/telephony/plivo/answer`
+- **Answer method:** **POST**
+- **Indian phone number linked:** **NO** — no Plivo number is attached to the application.
+- **KYC:** **REQUIRED.** Today's work reached the Plivo requirement that **business KYC must be completed
+  before an Indian phone number can be obtained**. KYC is **not approved / not completed** (no number could be
+  obtained); no further status detail was recorded.
+- **Audio Streaming enabled on a number:** NOT VERIFIED (no number exists yet).
+
+### Current tunnel
+- Recorded Cloudflare quick-tunnel URL: `https://project-reflect-inspections-subscribers.trycloudflare.com`
+  (a `cloudflared` process was still running at the checkpoint). **Quick-tunnel hostnames change whenever the
+  tunnel restarts**, and the backend was **not running** at the checkpoint, so the tunnel currently forwards to
+  nothing (HTTP 502). If the tunnel URL changes, the Default application's Answer URL **and** `PUBLIC_BASE_URL`
+  must both be updated.
+
+### What has been successfully verified (all local / code-level)
+Backend suite **532 passed, 0 skipped** against Postgres+pgvector (497 passed / 30 skipped without a database,
+measured before the last fixes); Flutter analyze clean + 10 tests; debug APK builds; a 27/27 local rehearsal of
+the real server (real Postgres, Whisper, Brain v3, Piper) with a **simulated** caller covering auth, signed
+webhook with URL reconstruction, token rejection cases, junk-frame tolerance, English/Hindi/English turns,
+persistence and OFF-behaviour; migrations on SQLite and real Postgres.
+
+### What has NOT been verified
+Everything in the "Status" table marked NOT VERIFIED / NOT LIVE-VERIFIED; Plivo's inbound `start`/`media` JSON
+shape; whether Plivo preserves `?token=` on the WebSocket URL; whether closing the stream hangs up the phone call
+(END_CALL); Hinglish at all; real human Hindi speech; failure recovery on a live call; the 5-second human-first
+window on a device; the mobile client authenticating with the API key (needs a build with `WOW_API_KEY`); the
+privacy screen on a physical device.
+
+### Exact blockers
+1. **Plivo business KYC not completed → no Indian phone number can be rented** → there is no number to call.
+2. The backend is not currently running (it must be started with real providers before any call).
+3. The tunnel URL may change on restart (requires updating the Default application's Answer URL).
+4. Neon access is not available to the coding agent, so the production migration cannot be directly verified.
+
+### Exact next action
+**Complete / check Plivo business KYC; once approved, rent the Indian number and link it to the Default application.**
+
+### Where we stopped today
+Plivo credentials entered locally; the Default application's Answer URL set to the tunnel URL with POST; the
+dashboard then required business KYC before a number can be obtained; development stopped there. No call was made,
+no implementation was changed after `2e2e5dd`, and Phase 2 was not started.
+
+## NEXT SESSION — CONTINUE FROM HERE
+
+**CONTINUE FROM PLIVO KYC / PHONE NUMBER SETUP.**
+
+1. **Read this file first.**
+2. **Read `Phases.md` if/when it is available in the repository** (it was absent on 2026-10-02; reconcile §24).
+3. **Verify the Git state:** `git status`, `git log -5`; `git config user.name` / `user.email` must be
+   `iamankoo` / `aniketraj00384@gmail.com`; `origin/main` must equal `HEAD`; the working tree must be clean.
+4. **Verify the current Cloudflare tunnel URL** — it may have changed after any restart. If it differs from the
+   URL above, update the Plivo Default application's Answer URL and the `PUBLIC_BASE_URL` used at launch.
+5. **Check Plivo KYC status.**
+6. **If KYC is approved, obtain/rent the Indian Plivo phone number.**
+7. **Link the number to the existing Default application** (and confirm Audio Streaming is enabled).
+8. **Verify the Answer URL remains `<tunnel URL>/telephony/plivo/answer`, method POST.**
+9. **Start the WOW backend with real providers** (`backend/.env` already holds the credentials, the generated
+   `API_ACCESS_KEY` and the real-provider settings; pass `PUBLIC_BASE_URL` at launch; the local Postgres container
+   `wow-ai-phase1-rehearsal-pg` may need restarting; the backend takes ~1–2 minutes to load models).
+10. **Run the pre-call checks** (health, signed-webhook self-test with the real token, activation state — see
+    `docs/PLIVO_TESTING.md`; WOW is OFF by default and must be activated deliberately).
+11. **Only after the coding agent explicitly reports readiness, make the first real Plivo call.**
+12. **Complete the Phase 1 Live Validation Gate** (§23): English, Hindi, Hinglish, a language switch, persistence,
+    cleanup, activation, OTP redaction, END_CALL behaviour, failure recovery, then the full automated tests.
+13. **Do NOT start Phase 2 until Phase 1 is formally CLOSED.**
+
 ## 29. Last Updated
 
-- **Date:** 2026-10-01
-- **Latest code commit when written:** `2e2e5dd` (Phase 1 implementation: `3a0aa841ec41675bdb98cfd211e45e0e6d1bd16c`)
-- **Current phase:** Phase 1 — implementation complete, live validation in progress
+- **Date:** 2026-10-02 (end-of-day checkpoint; originally written 2026-10-01)
+- **Latest code commit:** `2e2e5dd` (Phase 1 implementation: `3a0aa841ec41675bdb98cfd211e45e0e6d1bd16c`); documentation commits follow it
+- **Current phase:** Phase 1 — implementation complete, live gate NOT CLOSED (blocked on Plivo KYC / phone number)
 - **Source:** generated from the repository, its docs, git history, tests and the project owner's written instructions;
   no secrets included. Update after every major phase.
