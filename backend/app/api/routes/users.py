@@ -25,14 +25,17 @@ class ActivationRequest(BaseModel):
     duration: Literal["15m", "1h", "5h", "until_stop", "off"]
 
 
-async def _apply_activation_expiry(user: User, session: AsyncSession) -> None:
+async def apply_activation_expiry(user: User, session: AsyncSession) -> None:
     """Real, lazy expiry (Phase 6 Part G) - this project has no background
     scheduler, so "WOW automatically becomes inactive" is enforced the
     moment anything next reads this user's state, not on a timer. Flips
     and persists call_assistant_enabled the instant active_until has
     passed, so a client never sees a stale "still on" reading."""
     if user.call_assistant_enabled and user.active_until is not None:
-        if datetime.now(timezone.utc) >= user.active_until:
+        until = user.active_until
+        if until.tzinfo is None:  # naive = stored UTC (e.g. SQLite round trip)
+            until = until.replace(tzinfo=timezone.utc)
+        if datetime.now(timezone.utc) >= until:
             user.call_assistant_enabled = False
             user.active_until = None
             await session.commit()
@@ -56,7 +59,7 @@ async def get_user(user_id: uuid.UUID, session: AsyncSession = Depends(get_db)) 
     user = result.scalars().first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    await _apply_activation_expiry(user, session)
+    await apply_activation_expiry(user, session)
     return user
 
 

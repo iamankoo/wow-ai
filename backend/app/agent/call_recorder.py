@@ -14,9 +14,19 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.summary_repository import SummaryRepository
+from app.learning.privacy_filter import SENSITIVE_STORAGE_PATTERNS, RegexPrivacyFilter
 from app.models.call import Call, CallDirection, CallStatus
 from app.models.conversation import Conversation, ConversationStatus
 from app.models.transcript import Speaker, TranscriptSegment
+
+
+# Phase 1 storage-time redaction (see docs/SECURITY.md): card-like numbers
+# and OTP/PIN codes spoken on a call are never persisted. Phone numbers,
+# emails and names are deliberately KEPT in the owner's own call history
+# (callback details are the point of a message-taking assistant; the data is
+# behind the API key and the call-retention window) - full PII handling for
+# stored transcripts is Phase 3.
+_storage_filter = RegexPrivacyFilter(only=SENSITIVE_STORAGE_PATTERNS)
 
 
 class CallRecorder:
@@ -54,14 +64,22 @@ class CallRecorder:
         await self._session.flush()
         return call, conversation
 
-    async def record_turn(self, *, conversation_id: str, speaker: Speaker, text: str) -> None:
+    async def record_turn(
+        self, *, conversation_id: str, speaker: Speaker, text: str, language: str | None = None
+    ) -> None:
         segment = TranscriptSegment(
             conversation_id=uuid.UUID(str(conversation_id)),
             speaker=speaker,
-            text=text,
+            text=_storage_filter.redact(text).redacted_text,
+            language=language,
         )
         self._session.add(segment)
         await self._session.flush()
+
+    async def rollback(self) -> None:
+        """Discards this recorder's pending (failed) transaction so a
+        poisoned session can't also break the dependency's final commit."""
+        await self._session.rollback()
 
     async def end_call(
         self,

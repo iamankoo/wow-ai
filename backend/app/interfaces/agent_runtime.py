@@ -24,5 +24,14 @@ class AgentRuntime(ABC):
         text: str,
         conversation_id: str | None = None,
         caller_number: str | None = None,
+        language: str | None = None,
     ) -> AgentAction:
-        """Process one turn of input and return a structured action."""
+        """Process one turn of input and return a structured action.
+
+        `language` (new, optional - "en"/"hi"/"hi-Latn" from
+        app.agent.language_detection, or None when the caller doesn't have
+        a per-turn detection signal, e.g. a text-only command) lets an
+        implementation that supports it (WowAgent) select a response in
+        the caller's actual detected language for this turn - never
+        required, always optional, so every existing caller of
+        handle_input keeps working unchanged."""

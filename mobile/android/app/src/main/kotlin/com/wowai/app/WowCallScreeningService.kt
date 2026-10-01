@@ -124,6 +124,9 @@ class WowCallScreeningService : CallScreeningService() {
                 connectTimeout = 5000
                 readTimeout = 5000
                 setRequestProperty("Content-Type", "application/json")
+                if (BuildConfig.WOW_API_KEY.isNotEmpty()) {
+                    setRequestProperty("X-WOW-API-Key", BuildConfig.WOW_API_KEY)
+                }
             }
 
             val payload = buildString {

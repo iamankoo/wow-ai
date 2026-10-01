@@ -5,8 +5,10 @@ import 'package:flutter/material.dart';
 import '../../core/api_client.dart';
 import '../../core/constants.dart';
 import '../../core/floating_button_controller.dart';
+import '../../core/permissions_bridge.dart';
 import '../../core/wow_theme.dart';
 import '../history/history_screen.dart';
+import '../privacy/privacy_permissions_screen.dart';
 import '../profile/profile_screen.dart';
 import '../settings/settings_screen.dart';
 import 'voice_command_sheet.dart';
@@ -147,9 +149,93 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// WOW Call Privacy/Control: turning WOW OFF stays instant, no friction -
+  /// "allow the user to disable WOW completely at any time" means exactly
+  /// that. Turning WOW ON is gated: real Android permission status is
+  /// checked first (never assumed), and an explicit confirmation showing
+  /// what's about to be enabled is required - no silent activation, ever,
+  /// even from this one-tap power button.
   Future<void> _toggleWow() async {
     final turningOn = _callAssistantEnabled != true;
-    final duration = turningOn ? _durationOptions[_selectedDuration].apiValue : 'off';
+    if (!turningOn) {
+      await _applyActivation('off');
+      return;
+    }
+
+    final status = await WowPermissionsBridge.status();
+    if (!status.readyForCallAssistant) {
+      await _promptForMissingPermissions(status);
+      return;
+    }
+
+    final duration = _durationOptions[_selectedDuration];
+    final confirmed = await _confirmEnableWow(duration.label);
+    if (confirmed == true) {
+      await _applyActivation(duration.apiValue);
+    }
+  }
+
+  Future<void> _promptForMissingPermissions(WowPermissionStatus status) async {
+    final goToPrivacy = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: WowColors.surface,
+        title: const Text('WOW needs access first', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: const Text(
+          "WOW can't reliably handle calls yet - one or more required permissions "
+          "(call handling, microphone, or contacts) hasn't been granted. Review and "
+          'grant access before turning WOW on.',
+          style: TextStyle(color: WowColors.textSecondary, fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel', style: TextStyle(color: WowColors.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Review access', style: TextStyle(color: WowColors.primaryBlue)),
+          ),
+        ],
+      ),
+    );
+    if (goToPrivacy == true && mounted) {
+      await Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => PrivacyPermissionsScreen(apiClient: widget.apiClient, user: _user ?? {}),
+        ),
+      );
+    }
+  }
+
+  Future<bool?> _confirmEnableWow(String durationLabel) {
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: WowColors.surface,
+        title: const Text('Turn WOW on?', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: Text(
+          'WOW will handle your calls for $durationLabel: detecting incoming calls, answering '
+          "if you don't after a short wait, listening to and processing audio with its AI "
+          'pipeline, and saving a transcript and summary to your call history. '
+          'You can turn WOW off at any time.',
+          style: const TextStyle(color: WowColors.textSecondary, fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel', style: TextStyle(color: WowColors.textMuted)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Turn on', style: TextStyle(color: WowColors.primaryBlue)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _applyActivation(String duration) async {
     setState(() => _busy = true);
     try {
       final response = await widget.apiClient.setActivation(kDemoUserId, duration);

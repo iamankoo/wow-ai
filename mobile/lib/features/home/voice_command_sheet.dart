@@ -32,6 +32,7 @@ class _VoiceCommandSheetState extends State<VoiceCommandSheet> {
   _VoiceState _state = _VoiceState.idle;
   String? _transcript;
   String? _replyText;
+  String? _language;
   String? _error;
 
   Future<void> _startRecording() async {
@@ -76,6 +77,7 @@ class _VoiceCommandSheetState extends State<VoiceCommandSheet> {
       final replyAudioBase64 = (result['reply_audio_base64'] as String?) ?? '';
       final replySampleRate =
           (result['reply_sample_rate'] as num?)?.toInt() ?? WowVoiceBridge.sampleRate;
+      final language = result['language'] as String?;
 
       if (transcript.trim().isEmpty) {
         if (mounted) setState(() => _state = _VoiceState.noSpeech);
@@ -87,6 +89,7 @@ class _VoiceCommandSheetState extends State<VoiceCommandSheet> {
           _state = _VoiceState.done;
           _transcript = transcript;
           _replyText = replyText;
+          _language = language;
         });
       }
 
@@ -123,6 +126,19 @@ class _VoiceCommandSheetState extends State<VoiceCommandSheet> {
   }
 
   IconData get _micIcon => _state == _VoiceState.recording ? Icons.stop : Icons.mic;
+
+  String _languageLabel(String code) {
+    switch (code) {
+      case 'hi':
+        return 'Hindi';
+      case 'hi-Latn':
+        return 'Hinglish';
+      case 'en':
+        return 'English';
+      default:
+        return code;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -200,6 +216,11 @@ class _VoiceCommandSheetState extends State<VoiceCommandSheet> {
                 ],
               ),
             ),
+            if (_language != null) ...[
+              const SizedBox(height: 8),
+              Text('Detected language: ${_languageLabel(_language!)}',
+                  style: const TextStyle(color: WowColors.textMuted, fontSize: 11)),
+            ],
           ],
         ],
       ),

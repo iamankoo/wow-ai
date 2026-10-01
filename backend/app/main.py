@@ -1,13 +1,25 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
-from app.api.routes import brain, calls, contacts, feedback, health, memories, users, verification
+from app.api.routes import (
+    brain,
+    calls,
+    contacts,
+    feedback,
+    health,
+    memories,
+    telephony_plivo,
+    users,
+    verification,
+)
+from app.config import get_settings
 from app.db.base import Base
 from app.db.session import engine
+from app.security import require_api_key, validate_security_config
 
 
 async def create_tables(engine: AsyncEngine) -> None:
@@ -24,11 +36,25 @@ async def create_tables(engine: AsyncEngine) -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Refuses to start when the backend is configured to be publicly
+    # reachable (PUBLIC_BASE_URL) without API_ACCESS_KEY/PLIVO_AUTH_TOKEN.
+    validate_security_config(get_settings())
     await create_tables(engine)
     yield
 
 
-app = FastAPI(title="WOW AI Backend", version="0.1.0", lifespan=lifespan)
+_settings = get_settings()
+# The interactive docs/OpenAPI schema enumerate every route - not served when
+# the API is key-protected or publicly tunnelled.
+_expose_docs = not (_settings.api_access_key or _settings.public_base_url)
+app = FastAPI(
+    title="WOW AI Backend",
+    version="0.1.0",
+    lifespan=lifespan,
+    docs_url="/docs" if _expose_docs else None,
+    redoc_url="/redoc" if _expose_docs else None,
+    openapi_url="/openapi.json" if _expose_docs else None,
+)
 
 # The Android app is the only real client and carries no browser cookies/
 # session, so there's no CORS-relevant origin to restrict to - this exists
@@ -42,11 +68,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Every REST route except /health sits behind the shared API key
+# (app/security.py) - a no-op while API_ACCESS_KEY is unset, enforced once
+# set (mandatory whenever PUBLIC_BASE_URL is set). The Plivo router is NOT
+# behind it: it is called by Plivo, not the app, and authenticates itself
+# (X-Plivo-Signature-V3 on the webhook, a single-use token on the stream).
+_protected = [Depends(require_api_key)]
+
 app.include_router(health.router)
-app.include_router(users.router)
-app.include_router(contacts.router)
-app.include_router(brain.router)
-app.include_router(feedback.router)
-app.include_router(memories.router)
-app.include_router(verification.router)
-app.include_router(calls.router)
+app.include_router(users.router, dependencies=_protected)
+app.include_router(contacts.router, dependencies=_protected)
+app.include_router(brain.router, dependencies=_protected)
+app.include_router(feedback.router, dependencies=_protected)
+app.include_router(memories.router, dependencies=_protected)
+app.include_router(verification.router, dependencies=_protected)
+app.include_router(calls.router, dependencies=_protected)
+app.include_router(telephony_plivo.router)

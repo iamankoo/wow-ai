@@ -190,11 +190,21 @@ class LocalWhisperSTTProvider(SpeechToTextProvider):
         if sample_rate != _WHISPER_SAMPLE_RATE:
             samples = _resample_linear(samples, sample_rate, _WHISPER_SAMPLE_RATE)
 
-        segments_iter, _info = self._model.transcribe(samples, language=self._language)
+        segments_iter, info = self._model.transcribe(samples, language=self._language)
         segments = list(segments_iter)
         text = " ".join(s.text.strip() for s in segments).strip()
         confidence = _confidence_from_segments(segments)
-        return TranscriptionResult(text=text, is_final=True, confidence=confidence)
+        # faster-whisper already performs real acoustic language ID as a
+        # side effect of transcription (`info.language`/`.language_probability`)
+        # - previously computed and discarded; now surfaced for real,
+        # zero extra latency, see app.agent.language_detection.
+        return TranscriptionResult(
+            text=text,
+            is_final=True,
+            confidence=confidence,
+            language=getattr(info, "language", None),
+            language_probability=getattr(info, "language_probability", None),
+        )
 
     async def start_stream(self, *, sample_rate: int = 16000) -> STTStreamSession:
         return LocalWhisperSTTStreamSession(self, sample_rate)

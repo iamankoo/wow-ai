@@ -78,6 +78,70 @@ class Settings(BaseSettings):
     tts_provider: str = "simulated"
     whisper_model_size: str = "base"
 
+    # Real telephony (Plivo) - app/api/routes/telephony_plivo.py,
+    # app/providers/telephony/plivo.py. This project has no real account
+    # system yet (Phase 1), and a Plivo number maps to exactly one WOW
+    # user for now - matches the same fixed demo-user convention the
+    # Android app and mobile UI already hardcode (kDemoUserId in
+    # mobile/lib/core/constants.dart, DEMO_USER_ID in
+    # WowCallScreeningService.kt/WowAutoAnswer.kt) - defined here once so
+    # the backend side of that same convention isn't duplicated per file.
+    demo_user_id: str = "00000000-0000-0000-0000-000000000001"
+    # The public https/wss base URL this backend is reachable at (e.g. a
+    # Cloudflare Tunnel/ngrok URL during local testing, or the real
+    # production domain later) - used to build the `<Stream>` wss:// URL
+    # in the PLIVOXML answer response. Explicit config rather than
+    # inferring from the incoming request's Host/scheme headers: those are
+    # only trustworthy if uvicorn is run with --proxy-headers and a
+    # correctly configured --forwarded-allow-ips behind the tunnel, which
+    # this project does not assume is always set up correctly - an
+    # explicit, operator-set value is safer than silently guessing wrong
+    # and emitting ws:// instead of wss:// (which Plivo would reject).
+    # None (the default) means "derive from the request" - documented in
+    # app/api/routes/telephony_plivo.py as the less-safe fallback.
+    public_base_url: str | None = None
+    # Plivo Auth Token - ONLY ever sourced from the environment (this
+    # field, like every other Settings field, is populated from env vars/
+    # .env by pydantic-settings; never hardcoded in this repository, never
+    # committed). Required to verify the real X-Plivo-Signature-V3 header
+    # on the Answer URL webhook (app/api/routes/telephony_plivo.py,
+    # app/providers/telephony/plivo_signature.py) - the exact mechanism
+    # Plivo's own official docs describe (HMAC-SHA256 over the request,
+    # keyed by this token). None (the default) means signature validation
+    # is skipped with a loud warning logged on every request - safe for
+    # initial local testing before a real Plivo account/token exists, but
+    # must be set for any real/production use.
+    plivo_auth_token: str | None = None
+    # (Phase 1 update: unset no longer means "skip" - the Answer webhook now
+    # fails closed unless plivo_allow_unsigned_webhooks is explicitly set
+    # AND public_base_url is unset. See telephony_plivo._verify_plivo_signature.)
+
+    # Plivo Auth ID - environment-only, like plivo_auth_token. Not used for
+    # webhook verification (only the Auth Token is); reserved for Plivo REST
+    # calls (e.g. the call-hangup follow-up noted in docs/PLIVO_TESTING.md).
+    plivo_auth_id: str | None = None
+    # Dev-only escape hatch: accept Answer-URL webhooks WITHOUT an
+    # X-Plivo-Signature-V3 check when plivo_auth_token is unset. Ignored
+    # (the webhook fails closed) whenever public_base_url is set, since a
+    # public tunnel means anyone on the internet can reach the endpoint.
+    plivo_allow_unsigned_webhooks: bool = False
+    # Short-lived, single-use correlation token minted by the (signed)
+    # Answer webhook and required on the Stream WebSocket URL - see
+    # app/providers/telephony/stream_tokens.py.
+    plivo_stream_token_ttl_seconds: int = 120
+    # Resource caps for the media bridge: simultaneous live streams, and a
+    # hard ceiling on one call's duration.
+    plivo_max_concurrent_streams: int = 2
+    plivo_max_call_seconds: int = 1800
+
+    # Shared secret required (header X-WOW-API-Key) on every REST route
+    # except /health and the Plivo routes (which have their own auth).
+    # ENVIRONMENT-ONLY. None = not enforced (backward compatibility with
+    # already-installed app builds) - but the backend refuses to start with
+    # public_base_url set and this unset (app/security.py). This is a
+    # single-tenant boundary, not per-user auth - see docs/SECURITY.md.
+    api_access_key: str | None = None
+
 
 @lru_cache
 def get_settings() -> Settings:

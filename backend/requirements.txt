@@ -10,6 +10,9 @@ redis==5.0.8
 python-dotenv==1.0.1
 greenlet==3.1.1
 
+# Schema migrations (backend/migrations, run before the server starts - see Dockerfile).
+alembic==1.13.3
+
 # MediaPipeline's VAD stage (app/providers/vad/webrtc_vad.py) runs
 # unconditionally on every /brain/voice-command call regardless of the
 # STT_PROVIDER/TTS_PROVIDER choice - simulated speech still needs segment
@@ -17,6 +20,12 @@ greenlet==3.1.1
 # unlike the actual STT/TTS engines - see requirements-local-stt.txt/
 # requirements-local-tts.txt for those opt-in, heavier dependencies.
 webrtcvad-wheels>=2.0.14
+
+# Required by Starlette's Request.form() (app/api/routes/telephony_plivo.py's
+# real Plivo Answer URL webhook parses the standard
+# application/x-www-form-urlencoded POST body Plivo sends) - Starlette
+# needs this for all form parsing, urlencoded included, not just multipart.
+python-multipart==0.0.12
 
 pytest==8.3.3
 pytest-asyncio==0.24.0

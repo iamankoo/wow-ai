@@ -37,7 +37,13 @@ class WowBrain(AgentRuntime):
         text: str,
         conversation_id: str | None = None,
         caller_number: str | None = None,
+        language: str | None = None,
     ) -> AgentAction:
+        # v0 is a straight-line flow with no response-composition layer of
+        # its own (see module docstring) - `language` is accepted to
+        # satisfy the AgentRuntime contract but has no effect here; WowAgent
+        # is where real per-language response selection lives.
+        del language
         context = await self._context_engine.build_context(
             user_id=user_id,
             caller_number=caller_number,

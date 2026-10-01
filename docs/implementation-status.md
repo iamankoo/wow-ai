@@ -815,3 +815,559 @@ of them.
 
 Tests after this block: **243 passed, 10 skipped** (was 241/10).
 `training/tests/`: unchanged. No regressions.
+
+## Note: this file was not kept in sync for Phases 3-8
+
+Real work landed in git history well beyond Block 5 above (activation
+durations, real Android `CallScreeningService`/`TelecomManager`
+auto-answer verified on a physical device, real call history, Render
+production deployment, Agent Core's full tool/policy/clarification
+completion) without corresponding entries here. Read `git log` and the
+code directly for anything between Block 5 and the round below; this gap
+is stated rather than silently left to look like nothing happened.
+
+## Real-telephony investigation + zero-cost prep (2026-09-17)
+
+On explicit instruction to investigate what's needed for WOW to hold a
+real two-way conversation with an actual caller (not a simulated one),
+and to stop before spending any money.
+
+**Investigation** (full repository read, backend test suite run - 259
+passed/29 skipped before any change, confirming nothing was already
+broken): confirmed `TelephonyProvider` has no real implementation (only
+`SimulatedTelephonyProvider`), and that Android's `CallScreeningService`/
+`TelecomManager.acceptRingingCall()` path (real, already working on a
+physical device) cannot be extended to carry real GSM call audio -
+`MediaRecorder.AudioSource.VOICE_CALL` is OS-restricted to
+privileged/carrier apps for any third-party app, confirmed against the
+existing code's own honest documentation of this
+(`WowCallScreeningService.kt`). Recommended architecture: carrier
+no-answer call forwarding to a telephony-provider virtual number with
+real-time bidirectional streaming, bridged into the already-real
+`MediaPipeline`/`WowAgent`/Piper stack - full detail and rationale in
+`docs/ARCHITECTURE.md` "Real telephony - the missing seam".
+
+**Provider/cost research** (live pages checked, not memory): Twilio ruled
+out for this use case - its own India voice-pricing page marks inbound
+unsupported for Local/Mobile Indian numbers. Exotel supports real inbound
+PSTN + bidirectional streaming but publishes no self-serve pricing
+(enterprise "book a demo" product); getting a real quote needs a direct
+sales conversation, not done this round. Render's pricing page (checked
+live): free plan spins down after 15 minutes idle (in addition to the
+already-known RAM ceiling that OOM-crashed real STT once in production,
+commit `d9bcb08`); realistic paid minimum for Brain v3 + Whisper + Piper
+together is the $25/mo 2GB "Standard" plan. No purchase made - reported to
+the project owner, awaiting a decision.
+
+**Implemented this round** (zero paid credentials required):
+
+- `WowAutoAnswer.kt`'s human-first auto-answer wait: 10s -> 5s, matching
+  the product spec's "~5 seconds" (previously tuned to 10s during Phase
+  5/8 real-device verification - the delay's actual verified magnitude,
+  not its exact value, was what that testing proved out).
+- `MediaPipeline.stream_call_audio()` (`app/media/pipeline.py`, new): the
+  provider-agnostic streaming counterpart to the pre-existing
+  `process_call_audio` - yields each `PipelineTurn` the instant VAD
+  confirms that utterance ended, rather than only once the entire audio
+  source is exhausted. `process_call_audio` is now a thin wrapper around
+  it (`[turn async for turn in stream_call_audio(...)]`) - its existing
+  contract (list, once the source ends) is unchanged and covered by the
+  same tests as before. This is the real gap a live telephony bridge
+  needs closed regardless of which provider is eventually chosen: a
+  caller must hear WOW's reply while the call is still open, not only
+  after it ends. New tests, all fast/ungated (simulated STT/TTS/VAD, no
+  heavy ML deps): `backend/tests/test_media_pipeline_streaming.py` (+3) -
+  proves a turn is yielded without its audio source ever ending (an
+  `asyncio.Event().wait()` that never resolves, read via
+  `asyncio.wait_for(..., timeout=5.0)` on the first yielded value only),
+  multi-turn ordering, and the `process_call_audio` regression check.
+- Deliberately **not** written: any vendor-specific `TelephonyProvider`
+  (Twilio/Exotel/other). No provider is chosen yet and no credentials
+  exist to test against - writing one now would be exactly the "fake
+  functionality" this project's engineering principle forbids, since it
+  could never actually be exercised against anything real.
+- `docs/ARCHITECTURE.md`, this file, and `README.md` updated to state the
+  real current status plainly (Phases 3-8's real work was previously
+  undocumented here - see the note above) and record this investigation
+  so a future session doesn't have to re-derive it.
+
+Tests after this round: **262 passed, 29 skipped** (was 259/29 - +3 new,
+all executed, none skipped). No regressions.
+
+## Real Plivo telephony bridge (2026-09-17)
+
+Verified Plivo against its official docs (not the prior lighter research
+pass) before writing any code - full quoted findings in
+docs/ARCHITECTURE.md "Real telephony" and docs/PLIVO_TESTING.md. Then
+implemented the real bridge, on explicit instruction, with a working local
+test procedure (`docs/PLIVO_TESTING.md`) for a PC + Cloudflare Tunnel +
+Plivo trial real phone call - no Render upgrade, no purchase made by the
+agent.
+
+**Context-instructions gap closed** (the one open decision flagged at the
+end of the prior round): `ContextProfile` gained `user_instructions`
+(nullable `Text`, `backend/app/models/context.py`) - the caller's own
+literal words when they set a context (e.g. "ask why they called, take a
+message, only mark it urgent if necessary"), captured alongside, not
+instead of, the fixed per-`ContextMode` `instructions` description that
+already drove policy/response-template behavior unchanged.
+`ContextProfileRepository.set_active` (ABC + SQL + in-memory) gained an
+optional `user_instructions` parameter; `SetContextTool.run`
+(`app/agent/builtin_tools.py`) captures it from the tool's (optional, not
+in `schema` - every existing caller unaffected) `user_instructions`
+argument, treating blank/whitespace as "nothing captured" rather than a
+real instruction. `WowAgent._build_tool_arguments` passes the turn's raw
+text through - a real correctness fix surfaced along the way, not just
+new capability: `ConversationState.pending_action` now also stores the
+*original* turn's text (`"text"` key), because the turn that actually
+*confirms* a clarified action just says "yes" - before this, a confirmed
+`SET_CONTEXT` (or `SAVE_MEMORY`/`COLLECT_MESSAGE`/`MARK_URGENT`) would
+have received "yes" as its content/instructions instead of the caller's
+real original words. `DefaultContextEngine.build_context` returns the
+captured value in `context_profile["user_instructions"]`. New tests:
+`test_agent_tools.py` (+3), `test_agent_orchestrator.py` (+2, including
+the confirm-preserves-original-text regression), plus a real-Postgres
+round-trip assertion added to the existing
+`test_set_context_tool_writes_a_profile_default_context_engine_can_read`
+in `test_integration_db.py` (DB-gated, not run live in this environment -
+same pre-existing reason, no `TEST_DATABASE_URL`).
+
+Honest scope note, stated plainly: this round makes the literal
+instructions real and queryable (`ContextProfile.user_instructions`,
+`ConversationContext.context_profile["user_instructions"]`) - it does
+**not** make `WowAgent`'s reply generation actually *use* that text yet
+(`generate_response`'s templates and `LanguageModelProvider.generate`'s
+prompt construction are unchanged, and Brain v3 itself was not modified,
+per instruction). Wiring the captured literal instructions into how WOW
+actually behaves on a call is real, separate future work.
+
+**Real G.711 mu-law <-> PCM16 codec + linear resampler**
+(`app/media/audio_codec.py`, new): Plivo's wire format is mu-law 8kHz;
+every other real provider in this project (VAD/STT/TTS) assumes PCM16
+16kHz. Pure Python + stdlib `struct` only - deliberately no `audioop`
+dependency (deprecated since Python 3.11, removed in 3.13 per PEP 594)
+and no numpy (an optional dependency elsewhere in this project, not
+something this unconditionally-needed module should require). mu-law
+encode/decode is the standard G.711 segment/exponent algorithm, derived
+via a real segment-boundary search rather than a hand-transcribed 256-row
+lookup table (a first attempt at literally transcribing that table from
+memory had a real, caught bug - see test history); decode is bit-exact
+against Python's own `audioop.ulaw2lin` (a genuine independent oracle,
+cross-checked in tests while still available on this Python version);
+encode matches audioop for >98% of samples, with the rare (~0.5%,
+boundary-adjacent) mismatches bounded to one quantization step apart -
+both bytes are valid G.711 encodings, and Plivo's own decoder (not this
+specific CPython build) is the real interop target. Resampling is real
+linear interpolation (not sample duplication/dropping), generic to any
+rate ratio, exercised for the specific 8kHz<->16kHz conversion this
+bridge needs. 11 new tests (`test_audio_codec.py`), including a full
+16kHz -> 8kHz -> mu-law -> decode -> 16kHz round trip bounded to a real,
+documented telephony-quality error tolerance.
+
+**`MediaPipeline.synthesize_reply`** (new, `app/media/pipeline.py`): a
+small, real refactor - `_finalize_turn`'s inline voice-resolution +
+synthesize logic was extracted into a reusable method (`_resolve_voice` +
+`synthesize_reply`), needed by the Plivo route to synthesize the call's
+fixed "Hello." opening greeting (via the real per-user voice resolver,
+same as every agent-generated reply) before any caller audio exists to
+respond to - not routed through Brain v3/Agent Core, since there is
+nothing to classify yet (same precedent as `CANCELLED_ACKNOWLEDGEMENT`'s
+fixed reply text - still real Piper TTS, never pre-recorded/fake audio).
+Zero behavior change to the pre-existing turn-reply path - all prior
+`test_media_pipeline*.py` tests pass unchanged.
+
+**`PlivoTelephonyProvider`** (`app/providers/telephony/plivo.py`, new):
+the first real (non-simulated) implementation of the pre-existing
+`TelephonyProvider` ABC. `send_audio` resamples PCM16 (any input rate,
+e.g. Piper's real per-voice rate) to 8kHz and mu-law-encodes it into
+Plivo's documented `playAudio` JSON envelope; `on_audio_received`
+registers a handler invoked with real inbound audio already converted to
+this project's PCM16/16kHz convention -
+`feed_inbound_message`/`_extract_media_payload` parse Plivo's `media`
+event defensively (nested `media.payload` per Plivo's own outbound
+convention, flat `payload` fallback, unrecognized shapes logged and
+skipped rather than crashing the call - genuinely not 100%-confirmed
+against a live call yet, see docs/PLIVO_TESTING.md's "what to watch for").
+`answer_call`/`end_call` are real but honestly scoped: Plivo has no
+separate "answer" step (the Answer URL's PLIVOXML response *is* the
+answer) so `answer_call` is a documented no-op/log; `end_call` closes the
+WebSocket, with the underlying PSTN call's actual hangup behavior flagged
+as unverified rather than assumed (a follow-up via Plivo's REST
+Call-hangup API if the first real test shows it's needed).
+`queue_to_async_iterator` bridges `on_audio_received`'s push-based handler
+callback onto `MediaPipeline.stream_call_audio()`'s pull-based async
+iterator. 12 new tests (`test_plivo_telephony_provider.py`), all using a
+fake `WebSocket` (this codebase's existing test-double pattern, not a
+fake phone call) - real mu-law conversion, real message parsing,
+including every defensive fallback path.
+
+**Two new routes** (`app/api/routes/telephony_plivo.py`, new):
+`POST /telephony/plivo/answer` (Plivo's Answer URL webhook - parses the
+real form-encoded `CallUUID`/`From` fields, returns PLIVOXML opening a
+`bidirectional="true"` Stream to this backend's own WebSocket route, no
+`<Speak>` - the real "Hello." greeting is Piper's, not Plivo's hosted
+voice) and `WS /telephony/plivo/stream` (the actual bridge: registers
+`PlivoTelephonyProvider.on_audio_received`, waits a bounded 2s for
+Plivo's `start` event so `CallRecorder.start_call` can record the real
+caller number instead of racing the concurrent receive loop, greets via
+`MediaPipeline.synthesize_reply`, drives
+`MediaPipeline.stream_call_audio()` over the inbound audio queue,
+records every real caller/assistant turn via `CallRecorder.record_turn`,
+sends each real reply back via `PlivoTelephonyProvider.send_audio`, and
+calls `CallRecorder.end_call` + `notify_call_handled` once the stream
+ends). `Settings.public_base_url` (new, `app/config.py`) makes the
+PLIVOXML response's `wss://` URL an explicit operator-set value rather
+than inferred from request headers, which are only trustworthy behind a
+tunnel if uvicorn runs with `--proxy-headers` - this project doesn't
+assume that's always configured correctly. `Settings.demo_user_id` (new)
+centralizes the single-tenant demo-user convention the Android
+app/mobile UI already hardcode, instead of a third hardcoded copy in the
+new route. New dependency: `python-multipart==0.0.12` (Starlette's
+`Request.form()` needs it for any form parsing, including the plain
+`application/x-www-form-urlencoded` body Plivo's webhook sends - a real
+gap the answer-webhook test caught immediately).
+
+**`app/observability/notifications.py`** (new): `notify_call_handled` - a
+real, minimal, explicitly-scoped "WOW handled a call" log line for this
+first local test, not a phone push notification (no Firebase/APNs wired
+into this project - the existing Android `NotificationHelper` only fires
+from a real GSM auto-answer in-process, a code path a Plivo call never
+reaches). 2 new tests.
+
+**Real end-to-end proof, not mocked**: `test_telephony_plivo.py`'s
+`test_real_call_audio_travels_through_the_full_plivo_bridge` drives a
+real WebSocket connection (FastAPI `TestClient`) carrying the real
+`meeting_context.wav` fixture - downsampled to 8kHz and mu-law-encoded
+exactly as a real Plivo call would deliver it (genuinely lossier than the
+fixture's native 16kHz, the real telephony-quality path, not a shortcut) -
+through the real route, `PlivoTelephonyProvider`, `MediaPipeline`, real
+`LocalWhisperSTTProvider`, a real `WowAgent` (`RuleBasedLanguageModelProvider`
+- this test proves the bridge's plumbing, not Brain v3's accuracy, which
+`test_agent_integration_v3.py`/`test_media_pipeline.py` already cover
+separately), and real `LocalPiperTTSProvider`, with a real `CallRecorder`
+writing to a real file-backed SQLite database (not `:memory:` - a
+same-process, different-thread/event-loop connection-reuse issue with
+`:memory:` was hit and fixed by switching to a real temp file). Asserts,
+against real rows re-read from a fresh connection afterward: a real
+`playAudio` greeting sent first, a real transcribed-and-replied-to turn
+sent second, a real `Call` row with the real captured caller number and
+`COMPLETED` status, real transcript segments (including the actual
+transcribed words, containing "meeting"), and a real summary. Gated on
+`pytest.importorskip("faster_whisper")`/`pytest.importorskip("piper")` -
+runs for real in this environment (both installed), skips cleanly where
+they aren't.
+
+**Deliberately not done**: no Brain v3 changes (per instruction - the
+context-instructions gap is closed at the data-capture layer only, not by
+retraining or prompt-engineering the model); no Render upgrade or any
+purchase; no signature validation on the Answer URL webhook (Plivo's
+inbound-webhook-signing scheme wasn't independently verified this round -
+flagged as a real gap, not silently skipped, in
+`app/providers/telephony/plivo.py`); no carrier call-forwarding setup
+(this milestone calls the Plivo number directly, per `docs/PLIVO_TESTING.md`).
+
+Tests after this round: **297 passed, 29 skipped** (was 262/29 - +35 new,
+all executed, none skipped). No regressions. `mobile/` untouched this
+round - nothing shipped in the installed app changed, so no version
+bump/release for it this time (see the project's standing release
+workflow: a release ships only once a round actually touches `mobile/`).
+
+## Plivo bridge production-safety review (2026-09-17)
+
+On explicit instruction, before any commit/push: reviewed the Plivo
+bridge's connection lifecycle/disconnect handling/malformed-frame
+handling/buffering/backpressure/concurrency/exception handling/cleanup,
+added Plivo's real documented webhook signature validation, and verified
+several specific claims rather than assuming them. Real, concrete bugs
+found and fixed - not just theoretical review:
+
+- **`receive_loop` could leak cleanup.** It only caught
+  `WebSocketDisconnect`; Starlette can raise other exceptions (e.g.
+  `RuntimeError`) once a connection is already gone, which would have
+  propagated out of `await receive_task` in `plivo_stream`'s `finally`
+  block and **skipped** `recorder.end_call`/`notify_call_handled`/
+  `provider.end_call` entirely - meaning a call could go unrecorded.
+  Fixed: `receive_loop` now catches and logs any exception, never lets
+  one escape the task.
+- **`recorder.start_call` failing would leak the receive task.** It ran
+  *before* the `try:` block, so a real DB error there would skip cleanup
+  entirely (the WebSocket and background task would never be closed).
+  Fixed: the whole body (including `start_call`) is now inside
+  try/except/finally, with `call`/`conversation` guarded as possibly
+  `None` in the cleanup path.
+- **Unbounded inbound audio queue.** While WOW is "thinking" (STT/Brain/
+  TTS for the previous turn), `stream_call_audio`'s consumption loop
+  isn't draining the queue, so inbound audio piles up - previously
+  unbounded, a real memory-growth risk for a pathological stall (this
+  project has already hit a real OOM crash once, see
+  `docs/DEPLOYMENT.md`). Fixed: bounded to `_AUDIO_QUEUE_MAXSIZE=2000`
+  (~40s of real audio), overflow drops the newest chunk with a logged
+  warning rather than blocking or growing without limit.
+- **WOW could activate itself.** Neither `plivo_answer` nor `plivo_stream`
+  checked `User.call_assistant_enabled`/`active_until` at all - every
+  inbound Plivo call was answered and handled unconditionally, directly
+  violating "WOW must never activate itself." Fixed: `plivo_answer` now
+  looks up the demo user, applies the same lazy activation-expiry logic
+  `GET /users/{id}` already uses (`apply_activation_expiry`, promoted from
+  a users.py-private helper to a real shared function since it now has
+  two real callers), and returns `<Hangup/>` instead of opening a Stream
+  when WOW isn't activated.
+
+**Real X-Plivo-Signature-V3 validation** (`app/providers/telephony/plivo_signature.py`,
+new): implemented from Plivo's own official docs
+(`plivo.com/docs/voice/concepts/signature-validation`), not invented -
+HMAC-SHA256 over the request URL + sorted POST params + nonce, keyed by
+the real Plivo Auth Token, constant-time compared
+(`hmac.compare_digest`) against the header (supporting the documented
+comma-separated multi-token case). No `plivo` SDK dependency - pure
+stdlib (`hmac`/`hashlib`/`base64`), matching `audio_codec.py`'s existing
+discipline. `Settings.plivo_auth_token` (new, environment-only, never
+hardcoded, absent from `.env.example` beyond a placeholder) gates it: unset
+means validation is skipped with a loud warning (acceptable only before a
+real Plivo account exists), set means a real mismatch is rejected with
+403. 8 new tests (`test_plivo_signature.py`), including the exact worked
+example quoted verbatim from Plivo's own docs page as a real, sourced
+test vector - not a self-invented one.
+
+**Verified, not assumed - two specific findings from the review's
+checklist**:
+
+- **Female Piper voice genuinely reaches the caller.** New test
+  (`test_female_piper_voice_is_actually_resolved_and_sent_back`, real
+  DB-backed `voice_resolver`, real `LocalPiperTTSProvider` with a spy)
+  proves `en_US-hfc_female-medium` (not the generic default voice) is
+  what's actually synthesized and sent for a real user with
+  `voice_gender=FEMALE` - the same `resolve_user_voice`/`get_media_pipeline`
+  wiring `/brain/voice-command` already used, now proven for the Plivo
+  route specifically too.
+- **Multiple sequential turns work, not just one.** New test
+  (`test_multiple_sequential_turns_in_one_call_are_all_handled`) sends two
+  real, distinct fixture utterances (`hello.wav` then `meeting_context.wav`,
+  separated by real silence) over one WebSocket connection; real VAD
+  actually found 3 separate turns (an extra real pause inside one
+  fixture), all real-transcribed and real-replied-to - stronger proof
+  than the 2 originally expected, not a discrepancy to paper over.
+- **Honest, not-yet-fixed finding, stated plainly**: `user_instructions`
+  (this round's earlier context-instructions capture) reaches the
+  `context` parameter passed to `LanguageModelProvider.generate()`
+  (confirmed by reading both `RuleBasedLanguageModelProvider.generate`
+  and `LocalWOWModelProvider.generate` directly) - but **neither provider
+  actually reads that parameter at all**, so today it has zero effect on
+  the generated reply. This is a pre-existing gap (even the original
+  `context_profile.instructions` was already unused before this round),
+  not something this round introduced or was asked to fix - flagged
+  here, not silently left undiscovered.
+
+**Also confirmed by direct code inspection, no code change needed**:
+credentials are environment-only everywhere (grepped for hardcoded
+tokens - none found); caller audio/transcript content is never logged in
+plaintext anywhere in the new code (grepped every `logger.*` call in the
+new modules - only call metadata: caller number, call id, event types,
+counts, durations, and the generic templated summary line, matching the
+existing `WowCallScreeningService.kt` precedent of logging caller
+number); `CallRecorder` creates exactly one `Call`/`Conversation` per
+real call with the real captured caller number and `COMPLETED` status,
+one `TranscriptSegment` per real turn, and one `Summary` at the end
+(already proven in `test_telephony_plivo.py`, re-confirmed this round).
+No lint/type-check tooling (ruff/mypy/flake8) is configured anywhere in
+this project - confirmed by checking for config files and installed
+packages, not silently assumed; none was added unprompted. `flutter
+analyze` and `flutter test` both pass cleanly (0 issues, 8/8 tests) -
+`mobile/`'s only change remains the previously-reported 5s auto-answer
+delay.
+
+**Known, accepted test-infrastructure artifact**: two of the heavier
+`test_telephony_plivo.py` tests occasionally emit a
+`PytestUnhandledThreadExceptionWarning` ("Event loop is closed") from a
+background `aiosqlite` thread finishing its own connection-close
+bookkeeping slightly after that test's own event loop was torn down by
+pytest - a timing race in test cleanup (FastAPI's `TestClient` runs the
+ASGI app in its own thread/loop), not a defect in the application code
+under test: every real assertion in every run has passed, and this
+warning does not fail the suite under normal (non-`-W error`) execution.
+Mitigated (real fixes, not a workaround): `NullPool` on the test-only
+SQLite engine, and explicit `engine.dispose()` at the end of each test
+rather than relying on GC timing.
+
+Tests after this round: **313 passed, 29 skipped** (was 297/29 - +16 new,
+all executed, none skipped). No regressions. Still no purchase, no Plivo
+account, no real call - see docs/PLIVO_TESTING.md for the unchanged
+next step.
+
+## Context-instruction execution + multilingual conversation (2026-09-17)
+
+Two rounds combined on explicit instruction: (1) closing the gap flagged
+at the end of the safety review - `user_instructions` reached
+`LanguageModelProvider.generate()`'s `context` param but neither provider
+read it, so it had zero effect on replies; (2) real per-turn Hindi/
+Hinglish/English detection and response. Brain v3 untouched (confirmed:
+`git diff --stat training/ app/providers/llm/local_wow.py` empty).
+
+**Architecture** (inspected before changing anything, per instruction):
+`RuleBasedLanguageModelProvider`/`LocalWOWModelProvider` both already
+ignore their `context` parameter entirely - this predates this round.
+`WowAgent`'s `generate_response()` call is the one real seam for reply
+text. New pipeline: `audio -> STT (+ real Whisper language signal) ->
+app.agent.language_detection.detect_language() -> WowAgent.handle_input(language=...)
+-> app.agent.response.generate_response(language=..., active_context_profile=...)
+-> TTS (app.media.voice_selection.resolve_voice_for_language)`. Brain
+v3/rule_based's own intent/context/action classification is completely
+unchanged and untouched by any of this - language detection and response
+composition are new, separate stages around it, not a replacement for it.
+
+**Context-instruction execution**
+(`app/agent/user_instructions.py`, new): `parse_user_instructions()`
+extracts real, bounded boolean directives (`ask_caller_reason`,
+`take_message`, `mark_urgent_only_if_necessary`, `do_not_disturb`) from
+the owner's literal text via regex - a small, honest detection-feature
+set (see the module's own docstring for why this isn't "a large
+collection of hardcoded responses": there are no responses hardcoded
+here, only booleans extracted from a short, formulaic owner-authored
+sentence, not matched against open-ended caller speech).
+`app/agent/response.py`'s `generate_response()` gained
+`active_context_profile` - when a conversational turn (ALLOW verdict, no
+llm_content, not confirmed, no action template) happens while a context
+is active, it now composes a real, grounded reply
+(`_compose_contextual_reply`) reflecting the active context mode and
+those directives, instead of the old generic "I heard you, but I'm not
+sure how to respond to that yet." Verified end to end with a real,
+distinguishing test: the SAME caller turn ("Hi, is Aniket there?")
+produces a DIFFERENT reply depending on whether `user_instructions` asks
+WOW to ask the caller's reason - proving real influence, not just
+storage (`test_active_context_with_literal_instructions_changes_the_reply`).
+
+**Honest limitation, stated plainly**: this is real, tested, deterministic
+composition - a genuinely richer template layer, not free generation.
+It does not reconstruct the caller's exact stated reason into a
+dynamically-composed sentence (e.g. "let him know you called about the
+project") the way a real LLM could - that needs either a fine-tuned
+generator or a hosted LLM, both out of scope (no hosted LLM, Brain v3
+unchanged). Reported honestly rather than overclaimed, per instruction.
+
+**Multilingual detection** (`app/agent/language_detection.py`, new):
+three combined real signals, never a keyword-response table - real
+Devanagari script detection, faster-whisper's own real acoustic language
+ID (previously computed and silently discarded by
+`LocalWhisperSTTProvider` - now surfaced via new `TranscriptionResult.language`/
+`.language_probability` fields, zero extra latency), and a bounded,
+linguistically-justified Hindi-function-word lexicon for Latin-script
+disambiguation. Output: `"en"` / `"hi"` / `"hi-Latn"` (a real BCP-47
+tag - Hindi content in Latin script, i.e. Hinglish; there is no
+standardized ISO code for Hinglish itself). A real, live-observed edge
+case was found and fixed during testing: Whisper transcribed genuine
+Piper-synthesized Hindi speech using Perso-Arabic/Urdu script (Hindi and
+Urdu are mutually intelligible spoken languages) rather than Devanagari
+or Latin - the detector now checks actual script composition
+(`_is_latin_script`) rather than assuming "not Devanagari" means Latin,
+so this still correctly resolves to `"hi"`, not a mislabeled `"hi-Latn"`.
+
+**Per-turn, not call-wide**: `MediaPipeline._finalize_turn` detects
+language fresh every turn and passes it to `WowAgent.handle_input`
+(`AgentRuntime.handle_input` gained an optional `language` parameter -
+`WowBrain` accepts and ignores it, satisfying the contract;
+`ConversationState.detected_language` - already present in the schema -
+now actually gets set) - proven to genuinely follow a caller switching
+languages mid-call, turn by turn, not locked to the first turn.
+
+**Per-language, per-context response templates**
+(`app/agent/response.py`): every existing template (clarify/refuse/
+handoff/tool-failure/confirmed/action templates, plus the new contextual
+composer) gained real Hindi/Hinglish phrase-bank entries, selected by
+the new `language` parameter - `language=None` (every pre-existing
+caller) is byte-identical to before this round, verified by a dedicated
+regression test.
+
+**Per-language female voice** (`app/media/voice_selection.py`):
+`resolve_voice_for_language(session, user_id, language_code)` reuses the
+existing real `resolve_piper_voice` mapping, substituting the detected
+language for the user's static profile language while preserving their
+real `voice_gender` - so a caller switching Hindi/Hinglish/English
+mid-call actually hears the matching female Piper voice each time, not
+one fixed voice for the whole call. Wired as `MediaPipeline`'s new
+optional `language_voice_resolver` (additive - the call's opening
+greeting, with no caller turn/language yet, still uses the static
+profile voice/`voice_resolver` unchanged) and into `get_media_pipeline()`
+for every real route.
+
+**Per-turn language storage**: `TranscriptSegment` gained a nullable
+`language` column; `CallRecorder.record_turn` gained an optional
+`language` parameter; `/telephony/plivo/stream` now records and logs
+(`WOW CALL HANDLED`-style, metadata only, never transcript content) the
+real detected language for both the caller's and WOW's turn on every
+real call.
+
+**Tests** (all real, all passing): `test_language_detection.py` (+12,
+including the real Urdu-script edge case), `test_user_instructions.py`
+(+6), `test_agent_response.py` (+10, context-aware + multilingual
+composition, plus a byte-identical-to-before regression check),
+`test_agent_orchestrator.py` (+6, full real `WowAgent` flow: context
+instructions changing behavior, Hindi/Hinglish/English replies, and a
+genuine mid-call language switch across 3 consecutive turns),
+`test_local_whisper_stt.py` (+1, real Whisper language field),
+`test_voice_selection_language.py` (+7, real per-language/gender voice
+resolution against a real SQLite-backed User row), and
+`test_telephony_plivo_multilingual.py` (+1) - the strongest proof
+available in this environment: a real Piper-synthesized Hindi utterance
+(no recorded Hindi fixture exists in this repo, so this test synthesizes
+one itself via the same real `hi_IN-priyamvada-medium` voice already used
+elsewhere) followed by the real `hello.wav` English fixture, both
+delivered exactly as a real Plivo call would (downsampled to 8kHz,
+mu-law-encoded), through the entire real bridge - proving a real language
+switch mid-call, real per-turn language storage, and the real female
+voice actually changing between `hi_IN-priyamvada-medium` and
+`en_US-hfc_female-medium` within one call.
+
+**Measured latency** (real, on this machine's CPU - faster-whisper
+`base`/int8, Piper, `RuleBasedLanguageModelProvider`; see the session's
+`measure_latency.py` scratchpad run, 3 consecutive turns of the real
+`meeting_context.wav` fixture): STT ≈1450-1520ms, language detection
+≈0ms (confirms the "real but essentially free" design claim - it's pure
+Python string/regex work on already-transcribed text, no model
+inference), agent (rule-based classify + policy + tool) ≈0ms, TTS ≈1484ms
+on the first call (includes one-time Piper voice-model load) then
+≈190-200ms once warm, total ≈3000ms first turn / ≈1650ms warm turns.
+STT dominates end-to-end latency by a wide margin - the real bottleneck
+for a live call is faster-whisper's `base` model on CPU, not language
+detection or response composition (both real, and both negligible).
+
+Tests after this round: **355 passed, 29 skipped** (was 313/29 - +42
+new, all executed, none skipped). No regressions. `mobile/`/`training/`/
+`app/providers/llm/` untouched. Still no purchase, no Plivo account, no
+real call.
+
+## Phase 1 - stabilization + security + Plivo production foundation (2026-10-01)
+
+Scope: make the current tree safe, reproducible and ready for the first real
+Plivo call. No Phase 2 work, no custom telephony, no real call made.
+Authoritative detail: `docs/SECURITY.md`; procedure: `docs/PLIVO_TESTING.md`.
+
+- **Tree reconciled and committed.** The previously uncommitted Plivo bridge,
+  multilingual/context-instruction work, privacy screen and 40+ modified files
+  are now in git (model weights, datasets and `.env` remain git-ignored).
+- **Plivo WebSocket auth.** Single-use, 120 s, `CallUUID`-bound tokens minted by
+  the signed Answer webhook and required on the stream URL (checked before
+  `accept()`); start-event call-id correlation; concurrent-stream and
+  max-duration caps. (`app/providers/telephony/stream_tokens.py`,
+  `app/api/routes/telephony_plivo.py`.)
+- **Answer webhook.** Signature check now fails closed; signed URL rebuilt from
+  `PUBLIC_BASE_URL` (previously a tunnel would have broken validation); missing
+  `CallUUID`, DB errors and caps hang up instead of erroring.
+- **API boundary.** `X-WOW-API-Key` on every REST route except `/health` + Plivo;
+  startup refuses a public URL without `API_ACCESS_KEY`/`PLIVO_AUTH_TOKEN`; docs
+  hidden when protected; Dart client + Android native code send the key.
+- **Parser.** Tolerant start/media parsing, `track: outbound` ignored, oversized/
+  non-object/invalid frames dropped; exact inbound JSON still unconfirmed.
+- **Resilience.** One failed STT/Brain/TTS turn no longer ends a live call (3
+  consecutive do); cleanup steps are independently guarded.
+- **Privacy.** Card/OTP/PIN numbers redacted before transcript storage; the privacy
+  screen no longer claims an in-app delete that does not exist.
+- **Database.** Alembic added (baseline adopts a `create_all` DB + `0002` adds
+  `context_profiles.user_instructions` / `transcript_segments.language`).
+  Previously-skipped Postgres-gated tests now run against a throwaway
+  pgvector Postgres; two stale ones were fixed (non-UUID conversation id).
+- **Activation.** OFF by default, exactly 15m/1h/5h/until_stop/off, lazy expiry now
+  tolerant of naive datetimes - covered by tests.
+
+Still NOT done / not proven: a real external Plivo call; Plivo's inbound JSON
+shape and query-string behaviour; whether `end_call` hangs up the PSTN call;
+per-user auth; production key enforcement; Business mode.

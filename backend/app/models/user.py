@@ -72,7 +72,7 @@ class User(UUIDPKMixin, TimestampMixin, Base):
     # (the 15 min/1 hour/5 hour options) - None while active means "Until I
     # stop" (indefinite, matches this column's own None-by-default when
     # inactive). Lazily enforced - see routes/users.py's
-    # _apply_activation_expiry - rather than a background scheduler this
+    # apply_activation_expiry - rather than a background scheduler this
     # project has no infrastructure for.
     active_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -84,7 +84,10 @@ class User(UUIDPKMixin, TimestampMixin, Base):
             return False
         if self.active_until is None:
             return True
-        return datetime.now(timezone.utc) < self.active_until
+        until = self.active_until
+        if until.tzinfo is None:  # e.g. SQLite round-trips tz-aware values as naive; stored as UTC
+            until = until.replace(tzinfo=timezone.utc)
+        return datetime.now(timezone.utc) < until
 
     @property
     def age(self) -> int | None:

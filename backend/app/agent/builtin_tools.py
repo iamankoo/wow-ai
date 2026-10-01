@@ -71,15 +71,31 @@ class SetContextTool(Tool):
             raise ToolValidationError(
                 f"{self.name}: '{value}' is not a known context mode"
             )
+        # user_instructions is optional (not in `schema`, so callers that
+        # never pass it - existing tests, any future caller - are
+        # unaffected) but if given must be a string, same as any other
+        # argument would be checked.
+        user_instructions = arguments.get("user_instructions")
+        if user_instructions is not None and not isinstance(user_instructions, str):
+            raise ToolValidationError(f"{self.name}: 'user_instructions' must be str")
 
     async def run(self, ctx: ToolContext, arguments: dict) -> dict:
         context_mode = arguments["context_mode"]
         instructions = CONTEXT_DESCRIPTIONS[ContextMode[context_mode]]
+        # The caller's own literal words when they set this context (e.g.
+        # "ask why they called, take a message, only mark it urgent if
+        # necessary") - captured alongside, not instead of, the fixed
+        # per-mode `instructions` description above, so the mode-driven
+        # taxonomy behavior (policy, response templates, taxonomy
+        # validation) is entirely unchanged; a blank/whitespace-only value
+        # is treated as "nothing captured", not a real instruction.
+        user_instructions = (arguments.get("user_instructions") or "").strip() or None
         profile_id = await self._repo.set_active(
             user_id=ctx.user_id,
             name=context_mode,
             instructions=instructions,
             contact_id=ctx.contact_id,
+            user_instructions=user_instructions,
         )
         return {"profile_id": profile_id, "context_mode": context_mode}
 

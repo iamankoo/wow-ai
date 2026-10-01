@@ -29,11 +29,32 @@ Never _throwApiException(http.Response response) {
   throw WowApiException(response.statusCode, detail);
 }
 
+/// Adds the backend's shared access key (header `X-WOW-API-Key`, see
+/// backend docs/SECURITY.md) to every request. A no-op when no key was built
+/// in, which is exactly how an un-keyed (local/dev) backend behaves.
+class _ApiKeyClient extends http.BaseClient {
+  _ApiKeyClient(this._inner, this._apiKey);
+
+  final http.Client _inner;
+  final String _apiKey;
+
+  @override
+  Future<http.StreamedResponse> send(http.BaseRequest request) {
+    request.headers['X-WOW-API-Key'] = _apiKey;
+    return _inner.send(request);
+  }
+
+  @override
+  void close() => _inner.close();
+}
+
 /// Thin client for the WOW AI backend. Talks to the FastAPI service defined
 /// in /backend - not to any third-party AI API.
 class WowApiClient {
-  WowApiClient({required this.baseUrl, http.Client? httpClient})
-      : _client = httpClient ?? http.Client();
+  WowApiClient({required this.baseUrl, http.Client? httpClient, String apiKey = ''})
+      : _client = apiKey.isEmpty
+            ? (httpClient ?? http.Client())
+            : _ApiKeyClient(httpClient ?? http.Client(), apiKey);
 
   final String baseUrl;
   final http.Client _client;
@@ -68,6 +89,7 @@ class WowApiClient {
     DateTime? dateOfBirth,
     String? preferredLanguage,
     String? voiceGender,
+    bool? trainingDataConsent,
   }) async {
     final body = <String, dynamic>{
       if (displayName != null) 'display_name': displayName,
@@ -78,6 +100,7 @@ class WowApiClient {
             '${dateOfBirth.year.toString().padLeft(4, '0')}-${dateOfBirth.month.toString().padLeft(2, '0')}-${dateOfBirth.day.toString().padLeft(2, '0')}',
       if (preferredLanguage != null) 'preferred_language': preferredLanguage,
       if (voiceGender != null) 'voice_gender': voiceGender,
+      if (trainingDataConsent != null) 'training_data_consent': trainingDataConsent,
     };
     final response = await _client.patch(
       Uri.parse('$baseUrl/users/$userId'),

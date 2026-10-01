@@ -61,6 +61,7 @@ class DefaultContextEngine(ContextEngine):
                 "id": str(profile.id),
                 "name": profile.name,
                 "instructions": profile.instructions,
+                "user_instructions": profile.user_instructions,
             }
             if profile
             else None,

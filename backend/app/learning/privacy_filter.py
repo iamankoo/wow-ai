@@ -30,11 +30,23 @@ _PATTERNS: list[tuple[str, re.Pattern]] = [
 ]
 
 
+# Pattern names that are credentials/financial secrets with no legitimate
+# reason to sit in a stored call transcript (unlike a callback phone number
+# or email, which the owner needs). See app/agent/call_recorder.py.
+SENSITIVE_STORAGE_PATTERNS = frozenset({"card_number", "otp_or_pin"})
+
+
 class RegexPrivacyFilter(PrivacyFilter):
+    def __init__(self, only: frozenset[str] | None = None):
+        """`only` restricts redaction to the named patterns (default: all)."""
+        self._only = only
+
     def redact(self, text: str) -> RedactionResult:
         redacted = text
         types: list[str] = []
         for name, pattern in _PATTERNS:
+            if self._only is not None and name not in self._only:
+                continue
             if pattern.search(redacted):
                 types.append(name)
                 redacted = pattern.sub(f"[REDACTED_{name.upper()}]", redacted)

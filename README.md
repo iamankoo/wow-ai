@@ -10,12 +10,25 @@ This README is written to be accurate, not aspirational: every claim below
 is marked as **Implemented** or **Planned**, and the current v3 model
 status is reported exactly as measured, not rounded up.
 
-> **Status: Phase 1 (personal use, single-tenant).** WOW AI is a working
-> backend + reasoning core + training pipeline today. It is **not yet** a
-> fully autonomous phone agent handling real live calls, and its
-> self-learning loop is a real, tested, offline pipeline - not a model that
-> updates itself from live traffic. See "Current limitations" below before
-> assuming otherwise.
+> **Status (personal use, single-tenant).** WOW AI is a working backend +
+> reasoning core + training pipeline, a real Android app that detects and
+> auto-answers real incoming calls on a physical device, a real voice/text
+> command path that sets your active context end to end, and (new) a real
+> Plivo telephony bridge (`app/providers/telephony/plivo.py`,
+> `app/api/routes/telephony_plivo.py`) capable of a real bidirectional
+> phone conversation - built and unit/integration-tested, but **not yet
+> proven against an actual live phone call** (no Plivo account has been
+> created yet). Telephony is **locked to Plivo** (no custom SIP/PSTN
+> bridge is planned). Phase 1 hardened it for a public tunnel: the Answer
+> webhook fails closed without a verified Plivo signature, the media
+> WebSocket needs a single-use call-bound token, every REST route sits
+> behind a shared API key, and schema changes now go through Alembic - see
+> `docs/SECURITY.md`. See `docs/ARCHITECTURE.md` "Real telephony" for the
+> architecture and `docs/PLIVO_TESTING.md` for the real-device test
+> procedure and exactly what remains to be confirmed by that first call.
+> Its self-learning loop is a real, tested, offline pipeline - not a model
+> that updates itself from live traffic. See "Current limitations" below
+> before assuming otherwise.
 
 ---
 
@@ -62,11 +75,13 @@ Let a phone owner delegate "answer this call for me" to an assistant that:
 | Memory safety: typed memories (episodic/semantic/contact/short-term), trust tiers (observed -> confirmed/user-approved), soft-delete (`/memories` API) | **Implemented** |
 | Self-learning feedback pipeline (consent -> privacy filter -> human approval -> retrain -> evaluate -> promote) | **Implemented**, fully offline/batched |
 | Data-subject rights (export, delete, disable training, reset personalization) | **Implemented** |
-| Android app shell (Flutter/Dart + Kotlin), backend round-trip proof-of-concept | **Implemented** |
-| Real telephony integration (`CallScreeningService`/`InCallService`) | **Planned** (only a deterministic local simulator, `SimulatedTelephonyProvider`, exists today) |
-| Self-hosted speech-to-text / text-to-speech | **Planned** (only deterministic local simulators, `SimulatedSTTProvider`/`SimulatedTTSProvider`, exist today) |
+| Android app: real `CallScreeningService` incoming-call detection + real `TelecomManager` auto-answer, verified on a physical device | **Implemented** |
+| Real bidirectional telephony bridge (Plivo Audio Streaming - `PlivoTelephonyProvider`) for an actual two-way caller conversation | **Implemented**, not yet proven on a real live call - see §18 and `docs/PLIVO_TESTING.md` |
+| Self-hosted speech-to-text / text-to-speech (`LocalWhisperSTTProvider` = faster-whisper, `LocalPiperTTSProvider` = Piper; male/female, English/Hindi voices) | **Implemented**, opt-in (`STT_PROVIDER=local_whisper`, `TTS_PROVIDER=local_piper`); runs on a PC, **not** on the free Render plan (RAM - a real OOM crash was observed, so production uses the deterministic simulators `SimulatedSTTProvider`/`SimulatedTTSProvider`) |
+| API security boundary: shared `X-WOW-API-Key` on every REST route except `/health` + Plivo routes; single-use call-bound stream token; fail-closed Plivo signature check; startup refuses a public URL without secrets (`docs/SECURITY.md`) | **Implemented** (single-tenant gate, not per-user auth; production Render not yet keyed - see `docs/SECURITY.md`) |
+| Alembic migrations (`backend/migrations`; baseline adopts an existing `create_all` database; run by the Dockerfile before the server starts) | **Implemented**, tested on SQLite and real Postgres+pgvector |
 | End-to-end simulated-call harness (`app/simulation/call_simulator.py`): scripted STT -> WowAgent -> TTS -> telephony, real orchestration around simulated audio | **Implemented** |
-| Call history persistence (`CallRecorder`: Call/Conversation/TranscriptSegment/Summary rows), wired into the simulated-call harness | **Implemented** |
+| Call history persistence (`CallRecorder`: Call/Conversation/TranscriptSegment/Summary rows), wired into the simulated-call harness and the Plivo bridge; card/OTP/PIN numbers are redacted before storage | **Implemented** |
 | Call/transcript retention + cleanup (`CALL_RETENTION_DAYS`, default 15) - `app/learning/call_retention.py`, run via `python -m app.learning.run_call_retention_cleanup` | **Implemented**, externally scheduled (no in-app scheduler) |
 | `LocalWOWModelProvider` as the default production reasoning provider | **Planned** (works today, opt-in via `MODEL_PROVIDER=local_wow`; `rule_based` is still the default) |
 | Live canary traffic routing between model versions | **Planned** (registry supports the status; routing logic does not exist yet) |
@@ -104,7 +119,8 @@ Provider interfaces and their Phase 1 implementations:
 | `MemoryStore` | `PgVectorMemoryStore` (Postgres + pgvector) | Real embeddings once a local embedding model is wired in |
 | `ContextEngine` | `DefaultContextEngine` (contact + profile + memory lookup) | Conversation-history summarization |
 | `AgentRuntime` | `WowBrain` v0 (default) / `WowAgent` (opt-in, `AGENT_RUNTIME=wow_agent` - state + memory + policy + tools, see `docs/ARCHITECTURE.md`) | `WowAgent` promoted to default once proven; STT/VAD-driven turn detection |
-| `SpeechToTextProvider` / `TextToSpeechProvider` / `TelephonyProvider` | Contract only | Self-hosted ASR/TTS (e.g. faster-whisper, Piper/Coqui) + Android call-handling bridge |
+| `SpeechToTextProvider` / `TextToSpeechProvider` | `LocalWhisperSTTProvider` / `LocalPiperTTSProvider` (real, opt-in) or simulators (default) | Streaming/GPU-backed engines if latency requires |
+| `TelephonyProvider` | `PlivoTelephonyProvider` (real, Plivo Audio Streaming, selected provider) / `SimulatedTelephonyProvider` (tests) | Carrier no-answer forwarding to the Plivo number; Business mode routing |
 
 Full design: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
@@ -291,9 +307,12 @@ step today: [`docs/SELF_LEARNING.md`](docs/SELF_LEARNING.md).
 FastAPI + SQLAlchemy (async) + Postgres/pgvector + Redis. Nine domain
 models (`backend/app/models/`): `users`, `contacts`, `context_profiles`,
 `calls`, `conversations`, `transcript_segments`, `summaries`, `memories`,
-`agent_states`. No Alembic migrations yet - Phase 1 bootstraps the schema
-with `Base.metadata.create_all()` on startup; introduce Alembic once the
-schema needs versioned, production-safe migrations.
+`agent_states`. Schema changes are versioned with Alembic (`backend/migrations`,
+`alembic upgrade head`; the Dockerfile runs it before starting the server).
+The baseline revision adopts a database originally built by
+`Base.metadata.create_all()` (which still runs at startup for fresh/dev
+databases but never alters existing tables). Later revisions must use the
+idempotent helpers in `app/db/migration_helpers.py`.
 
 ## 11. Mobile application
 
@@ -417,13 +436,29 @@ wow-ai/
 
 ## 18. Current limitations
 
-- No real telephony integration - calls aren't actually being answered yet.
-  `TelephonyProvider`/STT/TTS have deterministic local *simulators*
-  (`app/providers/{stt,tts,telephony}/simulated.py`) so the orchestration
-  stack around them is real and tested (`app/simulation/call_simulator.py`),
-  but no real audio, ASR/TTS engine, or carrier/VoIP integration exists.
-- The mobile app is a connectivity proof-of-concept, not a shipped call
-  handler; no telephony permissions are requested.
+- **Real two-way caller conversation is built but not yet proven on a
+  live call.** `TelephonyProvider` now has a real `PlivoTelephonyProvider`
+  implementation (`app/providers/telephony/plivo.py`) bridging Plivo's
+  Audio Streaming (mu-law/8kHz, real bidirectional WebSocket, verified
+  against Plivo's official docs) onto the already-real STT/Brain
+  v3/Agent Core/Piper pipeline, with real unit and integration tests
+  (`backend/tests/test_telephony_plivo*.py`,
+  `test_plivo_telephony_provider.py`) - including one that drives a real
+  WebSocket connection with real (downsampled, mu-law-encoded) audio
+  through the entire bridge and checks real database rows afterward.
+  What hasn't happened yet: an actual Plivo account/number, and an actual
+  live phone call - see `docs/PLIVO_TESTING.md` for the exact test
+  procedure and the specific things (Plivo's exact inbound JSON nesting,
+  whether `end_call` really hangs up the PSTN call) that only a real call
+  can confirm. Android's real incoming-call detection/auto-answer
+  (`CallScreeningService`/`TelecomManager`) is separate and unaffected -
+  it still can't access live GSM call audio (an OS restriction), which is
+  exactly why this bridge uses a separate Plivo number rather than trying
+  to tap the physical SIM's call audio - see `docs/ARCHITECTURE.md` "Real
+  telephony" for the full architecture.
+- The mobile app requests and uses real telephony permissions in
+  production (`CALL_SCREENING`, `ANSWER_PHONE_CALLS`) - it is not a
+  connectivity proof-of-concept any more, see above.
 - The default production reasoning provider is still the rule-based
   keyword classifier (`MODEL_PROVIDER=rule_based`); the trained neural
   model is available (`local_wow`) but opt-in, not yet the default.
@@ -441,7 +476,12 @@ wow-ai/
 - Dataset-version building, retraining, and promotion are human-run steps,
   not an automated pipeline - by design, not an oversight (see §9).
 - No live canary traffic routing between model versions yet.
-- No Alembic migrations - schema changes require care in Phase 1.
+- Authorization is a single shared API key (single-tenant), not per-user
+  accounts; the production Render deployment is not yet key-protected (the
+  installed app build sends no key) - see `docs/SECURITY.md` for what is
+  deferred to Phase 3.
+- Stored transcripts redact card/OTP/PIN numbers only; phone numbers/emails
+  are kept for the owner's callback needs.
 
 ## 19. Roadmap / next steps
 
@@ -461,7 +501,8 @@ wow-ai/
   encoder) if Hindi/Hinglish accuracy remains the specific bottleneck.
 - Automated dataset-version build tooling (still deliberately manual today).
 - Live canary traffic routing in `app/api/deps.py`'s provider selection.
-- Alembic migrations once the schema needs versioned, production-safe changes.
+- Real Plivo call validation (next), then per-user accounts, full transcript PII
+  handling and in-app data deletion (Phase 3).
 
 ## 20. Implemented vs. planned - the short version
 

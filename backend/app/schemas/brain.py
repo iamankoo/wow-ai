@@ -50,6 +50,11 @@ class UserProfileUpdate(BaseModel):
     date_of_birth: date | None = None
     preferred_language: PreferredLanguage | None = None
     voice_gender: VoiceGender | None = None
+    # Real, patchable consent flag (was previously a DB-only column with no
+    # API surface at all) - the mobile privacy screen's "allow approved
+    # interactions into the self-learning pipeline" toggle needs a real
+    # field to write, not a decorative switch with nothing behind it.
+    training_data_consent: bool | None = None
 
 
 class UserRead(BaseModel):
@@ -67,6 +72,7 @@ class UserRead(BaseModel):
     profile_complete: bool = False
     call_assistant_enabled: bool = False
     active_until: datetime | None = None
+    training_data_consent: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -80,7 +86,10 @@ class UserRead(BaseModel):
         call_assistant_enabled to tell those apart."""
         if not self.call_assistant_enabled or self.active_until is None:
             return None
-        remaining = (self.active_until - datetime.now(timezone.utc)).total_seconds()
+        until = self.active_until
+        if until.tzinfo is None:  # naive = stored UTC (e.g. SQLite round trip)
+            until = until.replace(tzinfo=timezone.utc)
+        remaining = (until - datetime.now(timezone.utc)).total_seconds()
         return max(0, int(remaining))
 
 

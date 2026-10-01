@@ -488,9 +488,9 @@ class _PermissionsStepState extends State<_PermissionsStep> {
     if (mounted) setState(() => _status = status);
   }
 
-  Future<void> _requestPhoneAndContacts() async {
+  Future<void> _requestCorePermissions() async {
     setState(() => _busy = true);
-    final status = await WowPermissionsBridge.requestPhoneAndContacts();
+    final status = await WowPermissionsBridge.requestCorePermissions();
     if (mounted) {
       setState(() {
         _status = status;
@@ -515,8 +515,8 @@ class _PermissionsStepState extends State<_PermissionsStep> {
     final status = _status;
     return _StepScaffold(
       title: 'Permissions WOW needs',
-      subtitle: 'WOW only asks for what it actually uses - contacts, so it can recognize '
-          'callers, and call handling, so it can screen and answer calls when you turn it on.',
+      subtitle: 'WOW only asks for what it actually uses, and explains each one below. '
+          'You can review or change any of this later from Settings > Privacy & Permissions.',
       children: [
         if (status == null)
           const Center(child: CircularProgressIndicator(color: WowColors.primaryBlue))
@@ -525,7 +525,7 @@ class _PermissionsStepState extends State<_PermissionsStep> {
             icon: Icons.contacts_outlined,
             title: 'Contacts',
             subtitle: 'Recognize who is calling you',
-            granted: status.contacts && status.phonePermissionsGranted,
+            granted: status.contacts,
           ),
           const SizedBox(height: 10),
           _PermissionTile(
@@ -536,24 +536,49 @@ class _PermissionsStepState extends State<_PermissionsStep> {
           ),
           const SizedBox(height: 10),
           _PermissionTile(
+            icon: Icons.mic_none,
+            title: 'Microphone',
+            subtitle: 'Hear voice commands and, on a real call, the caller\'s speech',
+            granted: status.microphone,
+          ),
+          const SizedBox(height: 10),
+          _PermissionTile(
+            icon: Icons.notifications_none,
+            title: 'Notifications',
+            subtitle: 'Tell you when WOW has handled a call',
+            granted: status.notifications,
+          ),
+          const SizedBox(height: 10),
+          _PermissionTile(
             icon: Icons.call_received,
             title: 'Call screening role',
             subtitle: status.callScreeningRoleAvailable
                 ? 'A system role Android requires before WOW can screen calls'
                 : 'Not available on this Android version',
-            granted: status.callScreeningRole,
+            granted: !status.callScreeningRoleAvailable || status.callScreeningRole,
           ),
           const SizedBox(height: 20),
-          if (!status.phonePermissionsGranted || !status.contacts)
-            _PrimaryButton(label: 'Grant phone & contacts access', onPressed: _requestPhoneAndContacts, busy: _busy)
+          if (!status.phonePermissionsGranted || !status.contacts || !status.microphone || !status.notifications)
+            _PrimaryButton(label: 'Grant access', onPressed: _requestCorePermissions, busy: _busy)
           else if (status.callScreeningRoleAvailable && !status.callScreeningRole)
             _PrimaryButton(label: 'Grant call screening role', onPressed: _requestRole, busy: _busy)
           else
             _PrimaryButton(label: 'Continue', onPressed: widget.onDone),
-          if (status.allGranted == false && status.phonePermissionsGranted && status.contacts && (!status.callScreeningRoleAvailable || status.callScreeningRole))
+          if (status.phonePermissionsGranted &&
+              status.contacts &&
+              status.microphone &&
+              (!status.callScreeningRoleAvailable || status.callScreeningRole))
             Padding(
               padding: const EdgeInsets.only(top: 12),
               child: TextButton(onPressed: widget.onDone, child: const Text('Continue', style: TextStyle(color: WowColors.textMuted))),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: TextButton(
+                onPressed: widget.onDone,
+                child: const Text('Skip for now', style: TextStyle(color: WowColors.textMuted)),
+              ),
             ),
         ],
       ],

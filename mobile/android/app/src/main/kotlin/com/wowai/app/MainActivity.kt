@@ -73,6 +73,16 @@ private const val NOTIFICATIONS_CHANNEL = "com.wowai.app/notifications"
  * path as requestPhoneAndContacts, not a settings screen), `start`/`stop`
  * drive a real VoiceRecorder capturing raw mic audio, and `play` hands
  * the backend's real synthesized reply audio to VoicePlayer.
+ *
+ * WOW Telephony Validation stage: `currentStatus()` now also reports
+ * `microphone`/`notifications` (previously tracked only indirectly via
+ * VOICE_CHANNEL/the launch-time notification prompt, never surfaced to
+ * the explicit permission-review UI), and `requestCorePermissions` bundles
+ * every real runtime-grantable permission (phone/contacts/microphone,
+ * +notifications on API 33+) into one real Android multi-permission
+ * dialog for PrivacyPermissionsScreen's single "Grant access" action -
+ * the CALL_SCREENING role stays its own separate step (a RoleManager
+ * settings screen, not a runtime-permission dialog).
  */
 class MainActivity : FlutterActivity() {
     private var pendingPermissionsResult: MethodChannel.Result? = null
@@ -130,6 +140,7 @@ class MainActivity : FlutterActivity() {
                 when (call.method) {
                     "status" -> result.success(currentStatus())
                     "requestPhoneAndContacts" -> requestPhoneAndContacts(result)
+                    "requestCorePermissions" -> requestCorePermissions(result)
                     "requestCallScreeningRole" -> requestCallScreeningRole(result)
                     else -> result.notImplemented()
                 }
@@ -305,12 +316,21 @@ class MainActivity : FlutterActivity() {
             roleManager.isRoleHeld(RoleManager.ROLE_CALL_SCREENING)
     }
 
+    /** Notifications need no runtime permission at all below API 33 - report
+     * that as "granted" (nothing to ask for), not "denied", so the privacy
+     * screen never shows a false warning on older Android versions. */
+    private fun notificationsGranted(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            hasPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+
     private fun currentStatus(): Map<String, Any> = mapOf(
         "readPhoneState" to hasPermission(android.Manifest.permission.READ_PHONE_STATE),
         "answerPhoneCalls" to hasPermission(android.Manifest.permission.ANSWER_PHONE_CALLS),
         "contacts" to hasPermission(android.Manifest.permission.READ_CONTACTS),
         "callScreeningRole" to callScreeningRoleHeld(),
         "callScreeningRoleAvailable" to (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q),
+        "microphone" to hasPermission(android.Manifest.permission.RECORD_AUDIO),
+        "notifications" to notificationsGranted(),
     )
 
     private fun requestPhoneAndContacts(result: MethodChannel.Result) {
@@ -334,6 +354,46 @@ class MainActivity : FlutterActivity() {
         ActivityCompat.requestPermissions(this, needed.toTypedArray(), PHONE_PERMISSIONS_REQUEST_CODE)
     }
 
+    /**
+     * WOW Call Privacy/Control flow (real, explicit permission review - see
+     * PrivacyPermissionsScreen on the Dart side): bundles every real
+     * runtime-grantable permission WOW's call-handling features need
+     * (phone/contacts/microphone, plus notifications on API 33+) into ONE
+     * real Android multi-permission dialog - a single legitimate
+     * ActivityCompat.requestPermissions() call, not several separate
+     * prompts, and not a new/different mechanism from what
+     * requestPhoneAndContacts already uses. The CALL_SCREENING role is
+     * deliberately NOT included here - RoleManager is a different Android
+     * mechanism (a system settings screen via startActivityForResult, not
+     * a runtime-permission dialog) and must stay a separate, explicit step
+     * (requestCallScreeningRole).
+     */
+    private fun requestCorePermissions(result: MethodChannel.Result) {
+        val candidates = mutableListOf(
+            android.Manifest.permission.READ_PHONE_STATE,
+            android.Manifest.permission.ANSWER_PHONE_CALLS,
+            android.Manifest.permission.READ_CONTACTS,
+            android.Manifest.permission.RECORD_AUDIO,
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            candidates.add(android.Manifest.permission.POST_NOTIFICATIONS)
+        }
+        val needed = candidates.filter { !hasPermission(it) }
+
+        if (needed.isEmpty()) {
+            Log.i(TAG, "All core permissions already granted")
+            result.success(currentStatus())
+            return
+        }
+        if (pendingPermissionsResult != null) {
+            result.error("BUSY", "A permission request is already in progress", null)
+            return
+        }
+        pendingPermissionsResult = result
+        Log.i(TAG, "Requesting core permissions: $needed")
+        ActivityCompat.requestPermissions(this, needed.toTypedArray(), PHONE_PERMISSIONS_REQUEST_CODE)
+    }
+
     override fun onRequestPermissionsResult(
         requestCode: Int,
         permissions: Array<out String>,
@@ -350,6 +410,9 @@ class MainActivity : FlutterActivity() {
             Log.i(TAG, "RECORD_AUDIO permission result: granted=$granted")
             pendingVoicePermissionResult?.success(granted)
             pendingVoicePermissionResult = null
+        }
+        if (requestCode == NOTIFICATION_PERMISSION_REQUEST_CODE) {
+            Log.i(TAG, "POST_NOTIFICATIONS permission result: granted=${notificationsGranted()}")
         }
     }
 

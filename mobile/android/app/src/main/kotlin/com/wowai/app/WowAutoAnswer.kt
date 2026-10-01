@@ -16,12 +16,14 @@ import java.util.concurrent.Executors
 
 private const val TAG = "WowAutoAnswer"
 
-// Matches the "give the user ~10 seconds to handle it themselves" behavior -
+// Matches the "give the user ~5 seconds to handle it themselves" behavior -
 // only once a real incoming call has been RINGING this long with no human
 // answer/decline does WOW consider taking it, and only for a user who has
 // explicitly opted in (see checkAndMaybeAnswer's call_assistant_enabled
-// check below) - WOW never activates itself.
-private const val AUTO_ANSWER_DELAY_MS = 10_000L
+// check below) - WOW never activates itself. Was 10s (Phase 5/8 real-device
+// verification used that value); lowered to match the product spec's
+// "~5 seconds" human-first window.
+private const val AUTO_ANSWER_DELAY_MS = 5_000L
 
 /**
  * Phase 2 Block 7: real ANSWER_CALL - not a fake button.
@@ -131,6 +133,9 @@ object WowAutoAnswer {
                 requestMethod = "GET"
                 connectTimeout = 5000
                 readTimeout = 5000
+                if (BuildConfig.WOW_API_KEY.isNotEmpty()) {
+                    setRequestProperty("X-WOW-API-Key", BuildConfig.WOW_API_KEY)
+                }
             }
             val status = connection.responseCode
             if (status != 200) {

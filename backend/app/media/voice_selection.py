@@ -66,3 +66,37 @@ async def resolve_user_voice(session: AsyncSession, user_id: str) -> str | None:
     if user is None:
         return None
     return resolve_piper_voice(user.preferred_language, user.voice_gender)
+
+
+# app.agent.language_detection's real per-turn detected-language codes
+# ("en"/"hi"/"hi-Latn") mapped onto this module's existing PreferredLanguage
+# enum - hi-Latn (Hinglish) reuses the same real Hindi voice pair
+# PreferredLanguage.HINGLISH already does (see module docstring: Piper has
+# no distinct Hinglish voice model), so this is a real, direct reuse of
+# the existing mapping, not a new/parallel one.
+_DETECTED_LANGUAGE_TO_PREFERRED = {
+    "en": PreferredLanguage.ENGLISH,
+    "hi": PreferredLanguage.HINDI,
+    "hi-Latn": PreferredLanguage.HINGLISH,
+}
+
+
+async def resolve_voice_for_language(
+    session: AsyncSession, user_id: str, language_code: str
+) -> str | None:
+    """MediaPipeline.LanguageVoiceResolver's real implementation: resolves
+    the real Piper voice for THIS turn's detected language
+    (app.agent.language_detection's "en"/"hi"/"hi-Latn"), keeping the
+    user's own real voice_gender preference - only which language-voice
+    pair is used changes per turn, not who the voice sounds like. Falls
+    back to the user's own preferred_language (via resolve_user_voice) for
+    an unrecognized language code, and returns None (never a made-up
+    voice) if the user doesn't exist - same conventions as
+    resolve_user_voice."""
+    user = await session.get(User, uuid.UUID(str(user_id)))
+    if user is None:
+        return None
+    preferred = _DETECTED_LANGUAGE_TO_PREFERRED.get(language_code)
+    if preferred is None:
+        return resolve_piper_voice(user.preferred_language, user.voice_gender)
+    return resolve_piper_voice(preferred, user.voice_gender)

@@ -21,7 +21,7 @@ from app.interfaces.stt import SpeechToTextProvider
 from app.interfaces.tts import TextToSpeechProvider
 from app.learning.feedback_repository import SqlFeedbackRepository
 from app.media.pipeline import MediaPipeline
-from app.media.voice_selection import resolve_user_voice
+from app.media.voice_selection import resolve_user_voice, resolve_voice_for_language
 from app.providers.llm.rule_based import RuleBasedLanguageModelProvider
 from app.providers.memory.pgvector_store import PgVectorMemoryStore
 from app.providers.otp.logging_provider import LoggingOtpDeliveryProvider
@@ -162,7 +162,12 @@ async def get_media_pipeline() -> AsyncGenerator[MediaPipeline, None]:
     voice endpoint's MediaPipeline, wired to its own DB session (used only
     for per-user voice resolution - see
     app.media.voice_selection.resolve_user_voice - and for whichever
-    AgentRuntime is configured; commits on success like get_brain)."""
+    AgentRuntime is configured; commits on success like get_brain).
+    `language_voice_resolver` (new) additionally resolves the real
+    per-turn voice for a caller's detected language (Hindi/Hinglish/
+    English - see app.media.voice_selection.resolve_voice_for_language),
+    used by every real route built on this pipeline (/brain/voice-command,
+    /telephony/plivo/stream)."""
     async with AsyncSessionLocal() as session:
         agent = _build_agent(session)
         yield MediaPipeline(
@@ -171,6 +176,7 @@ async def get_media_pipeline() -> AsyncGenerator[MediaPipeline, None]:
             agent=agent,
             tts=_tts_provider,
             voice_resolver=functools.partial(resolve_user_voice, session),
+            language_voice_resolver=functools.partial(resolve_voice_for_language, session),
         )
         await session.commit()
 

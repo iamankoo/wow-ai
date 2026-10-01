@@ -144,6 +144,44 @@ async def test_set_context_tool_activates_a_profile(ctx):
     assert repo.active_name(user_id="u1") == "MEETING"
 
 
+async def test_set_context_tool_captures_the_caller_s_literal_instructions(ctx):
+    repo = InMemoryContextProfileRepository()
+    registry = ToolRegistry([SetContextTool(repo)])
+    literal = "ask why they called, take a message, only mark it urgent if necessary"
+
+    result = await registry.invoke(
+        "set_context", ctx, {"context_mode": "SLEEPING", "user_instructions": literal}
+    )
+
+    assert result.success is True
+    assert repo.active_user_instructions(user_id="u1") == literal
+
+
+async def test_set_context_tool_without_user_instructions_still_works(ctx):
+    """user_instructions is optional - every existing caller that only
+    ever passes context_mode (e.g. the deterministic activation endpoint)
+    must keep working unchanged."""
+    repo = InMemoryContextProfileRepository()
+    registry = ToolRegistry([SetContextTool(repo)])
+
+    result = await registry.invoke("set_context", ctx, {"context_mode": "MEETING"})
+
+    assert result.success is True
+    assert repo.active_user_instructions(user_id="u1") is None
+
+
+async def test_set_context_tool_treats_blank_user_instructions_as_none(ctx):
+    repo = InMemoryContextProfileRepository()
+    registry = ToolRegistry([SetContextTool(repo)])
+
+    result = await registry.invoke(
+        "set_context", ctx, {"context_mode": "BUSY", "user_instructions": "   "}
+    )
+
+    assert result.success is True
+    assert repo.active_user_instructions(user_id="u1") is None
+
+
 async def test_set_context_tool_switching_deactivates_the_previous_profile(ctx):
     repo = InMemoryContextProfileRepository()
     registry = ToolRegistry([SetContextTool(repo)])

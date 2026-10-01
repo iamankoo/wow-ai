@@ -27,6 +27,7 @@ class CallListItem(BaseModel):
 class TranscriptSegmentRead(BaseModel):
     speaker: Speaker
     text: str
+    language: str | None = None
 
     model_config = {"from_attributes": True}
 

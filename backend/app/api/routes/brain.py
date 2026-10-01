@@ -104,4 +104,5 @@ async def send_voice_command(
         reply_audio_base64=base64.b64encode(turn.reply_audio).decode("ascii"),
         reply_sample_rate=turn.reply_sample_rate,
         action_type=turn.agent_action.type,
+        language=turn.language,
     )

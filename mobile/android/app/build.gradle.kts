@@ -31,6 +31,11 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        // Backend shared access key for the native call-screening path
+        // (Dart's --dart-define can't reach Kotlin). Read from the build
+        // machine's WOW_API_KEY environment variable; empty if unset.
+        // Never hardcode or commit a real value - see backend docs/SECURITY.md.
+        buildConfigField("String", "WOW_API_KEY", "\"${System.getenv("WOW_API_KEY") ?: ""}\"")
     }
 
     buildTypes {

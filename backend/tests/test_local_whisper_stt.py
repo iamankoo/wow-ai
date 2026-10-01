@@ -58,6 +58,19 @@ async def test_real_transcription_of_hello_fixture(provider):
     assert 0.0 <= result.confidence <= 1.0
 
 
+async def test_real_transcription_surfaces_whisper_s_own_real_language_detection(provider):
+    """faster-whisper performs real acoustic language ID as a side effect
+    of transcription - this fixture is real spoken English, so Whisper's
+    own detector should say so, at zero extra latency (see
+    app.agent.language_detection, which combines this real signal with
+    script detection and a lexicon for the final per-turn decision)."""
+    pcm, sr = _read_pcm16(_FIXTURES / "hello.wav")
+    result = await provider.transcribe(pcm, sample_rate=sr)
+    assert result.language == "en"
+    assert result.language_probability is not None
+    assert 0.0 <= result.language_probability <= 1.0
+
+
 async def test_real_transcription_of_meeting_context_fixture(provider):
     pcm, sr = _read_pcm16(_FIXTURES / "meeting_context.wav")
     result = await provider.transcribe(pcm, sample_rate=sr)

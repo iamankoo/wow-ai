@@ -246,8 +246,14 @@ async def test_set_context_tool_writes_a_profile_default_context_engine_can_read
 
     agent._llm = _StubLLM()  # swap the provider only - everything else is the real stack
 
+    turn_text = "I'm in a meeting, handle my calls - take a message and only mark it urgent if it's about the client"
+    # agent_states.conversation_id is a real FK (and, since the Phase 8
+    # malformed-id hardening, must be a UUID) - give it a real conversation.
+    conversation = Conversation(user_id=user.id, status=ConversationStatus.ACTIVE)
+    session.add(conversation)
+    await session.flush()
     action = await agent.handle_input(
-        user_id=str(user.id), text="I'm in a meeting, handle my calls", conversation_id="conv-ctx"
+        user_id=str(user.id), text=turn_text, conversation_id=str(conversation.id)
     )
     await session.commit()
 
@@ -262,11 +268,15 @@ async def test_set_context_tool_writes_a_profile_default_context_engine_can_read
     row = (await session.execute(stmt)).scalars().first()
     assert row is not None
     assert row.name == "MEETING"
+    # The caller's own literal words, not just the classified MEETING label,
+    # must survive a real commit - see app.agent.builtin_tools.SetContextTool.
+    assert row.user_instructions == turn_text
 
     # The read side (already pre-existing) must independently see the same row.
     built_context = await context_engine.build_context(user_id=str(user.id))
     assert built_context.context_profile is not None
     assert built_context.context_profile["name"] == "MEETING"
+    assert built_context.context_profile["user_instructions"] == turn_text
 
 
 async def test_get_user_route_reports_call_assistant_enabled_for_real(session):

@@ -14,6 +14,18 @@ class TranscriptionResult:
     text: str
     is_final: bool = True
     confidence: float | None = None
+    # Real acoustic language signal, when the underlying engine produces
+    # one as a side effect of transcription (LocalWhisperSTTProvider does -
+    # faster-whisper detects the spoken language as part of decoding, at
+    # zero extra latency; SimulatedSTTProvider has no real acoustic model
+    # at all and leaves this None, honestly, rather than guessing). Not
+    # required - additive fields, every existing caller unaffected. See
+    # app.agent.language_detection for how this combines with real script
+    # detection and a lexicon to produce the final per-turn language
+    # decision (Hindi/Hinglish/English) - this field alone is not that
+    # decision, just one of its real inputs.
+    language: str | None = None
+    language_probability: float | None = None
 
 
 class STTStreamSession(ABC):

@@ -6,6 +6,7 @@ import '../../core/permissions_bridge.dart';
 import '../../core/update_bridge.dart';
 import '../../core/update_checker.dart';
 import '../../core/wow_theme.dart';
+import '../privacy/privacy_permissions_screen.dart';
 
 /// Phase 6 Part O - "at minimum support: language, voice, floating WOW
 /// button on/off, WOW activation/deactivation, permissions/status." WOW
@@ -76,6 +77,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  Future<void> _openPrivacyScreen() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PrivacyPermissionsScreen(apiClient: widget.apiClient, user: widget.user),
+      ),
+    );
+    // Real state may have changed on that screen (a permission granted, or
+    // WOW turned off) - re-read rather than assume nothing happened.
+    final status = await WowPermissionsBridge.status();
+    if (mounted) setState(() => _permissionStatus = status);
   }
 
   Future<void> _toggleFloatingButton(bool value) async {
@@ -295,7 +308,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     style: TextStyle(color: WowColors.textMuted, fontSize: 11.5)),
               ),
             ),
-            _sectionLabel('PERMISSIONS'),
+            _sectionLabel('PRIVACY & PERMISSIONS'),
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
@@ -308,11 +321,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 children: [
                   _permissionRow('Contacts', status?.contacts),
                   _permissionRow('Phone state & call answering', status?.phonePermissionsGranted),
+                  _permissionRow('Microphone', status?.microphone),
+                  _permissionRow('Notifications', status?.notifications),
                   _permissionRow(
                     'Call screening role',
                     status == null
                         ? null
                         : (status.callScreeningRoleAvailable ? status.callScreeningRole : true),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: _openPrivacyScreen,
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(color: WowColors.border),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      icon: const Icon(Icons.privacy_tip_outlined, color: WowColors.primaryBlue, size: 18),
+                      label: const Text('Manage privacy & permissions',
+                          style: TextStyle(color: Colors.white, fontSize: 13)),
+                    ),
                   ),
                 ],
               ),

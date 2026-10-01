@@ -16,8 +16,9 @@ docker compose up -d db redis backend
 - Postgres (with pgvector) is exposed on host port **5433** (mapped to the
   container's 5432, to avoid clashing with any other local Postgres).
 - Redis is exposed on host port **6380** (mapped to the container's 6379).
-- The backend is exposed on **8000** and creates its schema automatically on
-  startup.
+- The backend is exposed on **8000**. Its image runs `alembic upgrade head`
+  before starting the server (schema migrations, idempotent), and the app also
+  creates any missing tables on startup.
 
 Verify:
 
@@ -34,6 +35,14 @@ python -m venv .venv
 .venv/Scripts/activate        # Windows
 # source .venv/bin/activate   # macOS/Linux
 pip install -r requirements.txt
+
+# Optional but recommended whenever the backend is reachable from outside your
+# machine (see docs/SECURITY.md): the backend refuses to start with
+# PUBLIC_BASE_URL set unless both secrets below are set.
+#   export API_ACCESS_KEY=<long random value>
+#   export PLIVO_AUTH_TOKEN=<from the Plivo console>
+# Bring the schema to head (also adopts a database created by older builds):
+#   alembic upgrade head      # run from backend/
 
 # point at the Dockerized Postgres/Redis (see step 1), or your own instances
 export DATABASE_URL=postgresql+asyncpg://wow:wow@localhost:5433/wow_ai

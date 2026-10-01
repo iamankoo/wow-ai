@@ -15,3 +15,9 @@ class VoiceCommandResponse(BaseModel):
     reply_audio_base64: str
     reply_sample_rate: int
     action_type: str
+    # Real per-turn detected language ("en"/"hi"/"hi-Latn" - see
+    # app.agent.language_detection), None only when there was no real
+    # speech to detect a language from (empty transcript). Lets a client
+    # (e.g. the mobile app's physical-device voice test) directly observe
+    # what WOW actually detected, not just infer it from the reply text.
+    language: str | None = None

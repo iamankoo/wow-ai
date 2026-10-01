@@ -80,6 +80,29 @@ production:
 
 No hosted third-party AI API is introduced at any point in this path.
 
+### Schema migrations (Phase 1)
+
+The Docker image now runs `alembic upgrade head` before `uvicorn`
+(`backend/Dockerfile`). On the existing Neon database - built by
+`create_all`, with no `alembic_version` table - the baseline revision creates
+nothing that already exists and revision `0002_phase1_cols` adds the two nullable
+columns the current models need (`context_profiles.user_instructions`,
+`transcript_segments.language`); existing rows are untouched. Without this,
+deploying the current code to that database would fail on the first query that
+selects those columns, because `create_all` never alters existing tables. If a
+migration fails the container exits and Render keeps the previous healthy deploy
+live. The migration paths (fresh DB, adoption of a legacy-shaped DB with data,
+idempotency, downgrade) are tested on SQLite and on real Postgres+pgvector.
+
+### API key (not yet enabled on Render)
+
+Phase 1 adds a shared `API_ACCESS_KEY` gate on every REST route (docs/SECURITY.md).
+It is **not enforced on production yet**: the installed app (v1.2.0) sends no
+key, so turning it on before a build that does would lock the app out. When the
+next mobile build ships with `--dart-define=WOW_API_KEY=...`, set the same
+`API_ACCESS_KEY` in the Render environment. Until then production REST routes
+remain unauthenticated (known, documented, deferred).
+
 ### CORS
 
 `app/main.py` adds a permissive `CORSMiddleware` (`allow_origins=["*"]`).

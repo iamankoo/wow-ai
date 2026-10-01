@@ -10,6 +10,8 @@ class WowPermissionStatus {
     required this.contacts,
     required this.callScreeningRole,
     required this.callScreeningRoleAvailable,
+    required this.microphone,
+    required this.notifications,
   });
 
   factory WowPermissionStatus.fromMap(Map<Object?, Object?> map) {
@@ -19,6 +21,8 @@ class WowPermissionStatus {
       contacts: map['contacts'] as bool? ?? false,
       callScreeningRole: map['callScreeningRole'] as bool? ?? false,
       callScreeningRoleAvailable: map['callScreeningRoleAvailable'] as bool? ?? false,
+      microphone: map['microphone'] as bool? ?? false,
+      notifications: map['notifications'] as bool? ?? false,
     );
   }
 
@@ -27,6 +31,13 @@ class WowPermissionStatus {
   final bool contacts;
   final bool callScreeningRole;
   final bool callScreeningRoleAvailable;
+  // WOW Telephony Validation stage: microphone (real STT input - voice
+  // commands today, real caller-audio processing once a telephony bridge
+  // exists) and notifications (the real "WOW handled a call" alert) -
+  // previously granted ad hoc elsewhere in the app but never surfaced to
+  // the explicit permission-review UI.
+  final bool microphone;
+  final bool notifications;
 
   bool get phonePermissionsGranted => readPhoneState && answerPhoneCalls;
 
@@ -36,7 +47,13 @@ class WowPermissionStatus {
   bool get callHandlingReady =>
       phonePermissionsGranted && (!callScreeningRoleAvailable || callScreeningRole);
 
-  bool get allGranted => phonePermissionsGranted && contacts && callHandlingReady;
+  /// Everything WOW's real call-handling AND voice pipeline need - the
+  /// real gate `_toggleWow` checks before activating the call assistant,
+  /// so WOW can never be turned "on" while silently missing a permission
+  /// it actually depends on.
+  bool get readyForCallAssistant => callHandlingReady && contacts && microphone;
+
+  bool get allGranted => readyForCallAssistant && notifications;
 }
 
 /// Dart-side wrapper for MainActivity's real native permission/role
@@ -56,6 +73,19 @@ class WowPermissionsBridge {
   static Future<WowPermissionStatus> requestPhoneAndContacts() async {
     final result =
         await _channel.invokeMethod<Map<Object?, Object?>>('requestPhoneAndContacts');
+    return WowPermissionStatus.fromMap(result ?? const {});
+  }
+
+  /// Triggers ONE real Android multi-permission dialog covering every
+  /// runtime-grantable permission WOW's call assistant and voice pipeline
+  /// need (phone state, answer calls, contacts, microphone, and
+  /// notifications on API 33+) - skips any already granted. This is what
+  /// PrivacyPermissionsScreen's single "Grant access" action calls; the
+  /// CALL_SCREENING role still needs its own separate step below (a
+  /// different Android mechanism - a role, not a runtime permission).
+  static Future<WowPermissionStatus> requestCorePermissions() async {
+    final result =
+        await _channel.invokeMethod<Map<Object?, Object?>>('requestCorePermissions');
     return WowPermissionStatus.fromMap(result ?? const {});
   }
 

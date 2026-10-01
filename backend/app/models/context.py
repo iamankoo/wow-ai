@@ -21,4 +21,12 @@ class ContextProfile(UUIDPKMixin, TimestampMixin, Base):
     )
     name: Mapped[str] = mapped_column(String(80))
     instructions: Mapped[str] = mapped_column(Text)
+    # The user's own literal words when they set this context (e.g. "ask
+    # why they called, take a message, only mark it urgent if necessary"),
+    # separate from `instructions` (the fixed, generic per-ContextMode
+    # description from app.brain.taxonomy.CONTEXT_DESCRIPTIONS). Nullable -
+    # a profile created any other way (or before this column existed) simply
+    # has no captured literal instructions, not an error. See
+    # app.agent.builtin_tools.SetContextTool.
+    user_instructions: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)

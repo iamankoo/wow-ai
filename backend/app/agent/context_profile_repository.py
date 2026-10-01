@@ -35,10 +35,18 @@ class ContextProfileRepository(ABC):
         name: str,
         instructions: str,
         contact_id: str | None = None,
+        user_instructions: str | None = None,
     ) -> str:
         """Activate the profile named `name` for this (user, contact) scope,
         creating it if it doesn't exist yet and deactivating any other
-        currently-active profile in the same scope. Returns the profile id."""
+        currently-active profile in the same scope. Returns the profile id.
+
+        `user_instructions`, when given, is the user's own literal words
+        (e.g. "ask why they called, take a message, only mark it urgent if
+        necessary") - separate from `instructions` (the fixed, generic
+        per-ContextMode description). Optional so every existing caller
+        that only ever passed the generic description keeps working
+        unchanged."""
 
     @abstractmethod
     async def clear_active(self, *, user_id: str, contact_id: str | None = None) -> int:
@@ -58,6 +66,7 @@ class SqlContextProfileRepository(ContextProfileRepository):
         name: str,
         instructions: str,
         contact_id: str | None = None,
+        user_instructions: str | None = None,
     ) -> str:
         uid = uuid.UUID(str(user_id))
         cid = uuid.UUID(str(contact_id)) if contact_id else None
@@ -85,11 +94,13 @@ class SqlContextProfileRepository(ContextProfileRepository):
                 contact_id=cid,
                 name=name,
                 instructions=instructions,
+                user_instructions=user_instructions,
                 is_active=True,
             )
             self._session.add(target)
         else:
             target.instructions = instructions
+            target.user_instructions = user_instructions
             target.is_active = True
 
         await self._session.flush()
@@ -120,7 +131,8 @@ class InMemoryContextProfileRepository(ContextProfileRepository):
     """Test/dev double - no database required."""
 
     def __init__(self):
-        # (user_id, contact_id, name) -> {"id": str, "instructions": str, "is_active": bool}
+        # (user_id, contact_id, name) -> {"id": str, "instructions": str,
+        # "user_instructions": str | None, "is_active": bool}
         self._profiles: dict[tuple[str, str | None, str], dict] = {}
         self._next_id = 1
 
@@ -131,6 +143,7 @@ class InMemoryContextProfileRepository(ContextProfileRepository):
         name: str,
         instructions: str,
         contact_id: str | None = None,
+        user_instructions: str | None = None,
     ) -> str:
         for key, profile in self._profiles.items():
             if key[0] == user_id and key[1] == contact_id and key[2] != name:
@@ -139,11 +152,17 @@ class InMemoryContextProfileRepository(ContextProfileRepository):
         key = (user_id, contact_id, name)
         profile = self._profiles.get(key)
         if profile is None:
-            profile = {"id": str(self._next_id), "instructions": instructions, "is_active": True}
+            profile = {
+                "id": str(self._next_id),
+                "instructions": instructions,
+                "user_instructions": user_instructions,
+                "is_active": True,
+            }
             self._next_id += 1
             self._profiles[key] = profile
         else:
             profile["instructions"] = instructions
+            profile["user_instructions"] = user_instructions
             profile["is_active"] = True
         return profile["id"]
 
@@ -160,4 +179,14 @@ class InMemoryContextProfileRepository(ContextProfileRepository):
         for key, profile in self._profiles.items():
             if key[0] == user_id and key[1] == contact_id and profile["is_active"]:
                 return key[2]
+        return None
+
+    def active_user_instructions(
+        self, *, user_id: str, contact_id: str | None = None
+    ) -> str | None:
+        """Test helper: the currently-active profile's captured literal
+        user_instructions for this scope, if any."""
+        for key, profile in self._profiles.items():
+            if key[0] == user_id and key[1] == contact_id and profile["is_active"]:
+                return profile["user_instructions"]
         return None

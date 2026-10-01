@@ -150,12 +150,14 @@ class WowAgent(AgentRuntime):
         text: str,
         conversation_id: str | None = None,
         caller_number: str | None = None,
+        language: str | None = None,
     ) -> AgentAction:
         timings = StageTimings()
 
         state = await self._load_state(user_id, conversation_id)
         state.lifecycle = CallLifecycleStatus.LISTENING
         state.current_text = text
+        state.detected_language = language
         state.record_turn("caller", text)
 
         # Multi-turn clarification loop: a previous turn may have ended in
@@ -198,6 +200,11 @@ class WowAgent(AgentRuntime):
             confidence: dict = {}
             assessment = ConfidenceAssessment(needs_review=False, low_confidence_heads=[])
             llm_content: str | None = None
+            # `text` for *this* turn is just the confirmation word ("yes") -
+            # a tool that wants the caller's original literal wording (e.g.
+            # SetContextTool.user_instructions) needs the text from the
+            # turn that actually triggered CLARIFY, not this one.
+            tool_text = pending_action.get("text") or text
             state.pending_action = None
         else:
             with timings.measure("brain"):
@@ -227,6 +234,7 @@ class WowAgent(AgentRuntime):
                 context_mode = None
             intent = llm_response.intent
             llm_content = llm_response.content
+            tool_text = text
 
             if assessment.needs_review:
                 await self._log_for_review(
@@ -274,6 +282,7 @@ class WowAgent(AgentRuntime):
                     "action": candidate_action,
                     "context_mode": context_mode,
                     "intent": intent,
+                    "text": text,
                 }
             else:
                 state.pending_action = None
@@ -305,7 +314,7 @@ class WowAgent(AgentRuntime):
                             conversation_id=conversation_id,
                             contact_id=state.contact["id"] if state.contact else None,
                         ),
-                        _build_tool_arguments(tool_name, text, state),
+                        _build_tool_arguments(tool_name, tool_text, state),
                     )
                 tool_results.append(
                     {"tool": tool_name, "success": result.success, "error": result.error}
@@ -321,6 +330,8 @@ class WowAgent(AgentRuntime):
                 tool_failed=tool_failed,
                 action=candidate_action,
                 confirmed=confirmed,
+                language=language,
+                active_context_profile=context.context_profile,
             )
         state.response_text = reply
         state.record_turn("assistant", reply)
@@ -345,6 +356,7 @@ class WowAgent(AgentRuntime):
             type=intent or "unknown",
             payload={
                 "reply": reply,
+                "language": language,
                 "turn_count": state.turn_count,
                 "contact": context.contact,
                 "context_profile": context.context_profile,
@@ -471,7 +483,12 @@ def _build_tool_arguments(tool_name: str, text: str, state: ConversationState) -
         transcript_text = "\n".join(f"{t.speaker}: {t.text}" for t in state.transcript)
         return {"conversation_id": state.session_id, "summary_text": transcript_text}
     if tool_name == SetContextTool.name:
-        return {"context_mode": state.context_mode}
+        # `text` is this turn's raw input - exactly the user's own words
+        # when they issued the SET_CONTEXT command (e.g. "I am sleeping,
+        # ask why they called, take a message, only mark it urgent if
+        # necessary") - captured verbatim as user_instructions alongside
+        # the classified context_mode. See SetContextTool.run.
+        return {"context_mode": state.context_mode, "user_instructions": text}
     if tool_name in (ClearContextTool.name, EnableCallAssistantTool.name, DisableCallAssistantTool.name):
         return {}
     if tool_name in (CollectMessageTool.name, MarkUrgentTool.name):

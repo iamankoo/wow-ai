@@ -201,6 +201,42 @@ async def test_high_confidence_set_context_action_activates_a_profile():
     assert ctx_repo.active_name(user_id="u1") == "MEETING"
 
 
+async def test_set_context_action_captures_the_full_turn_text_as_user_instructions():
+    ctx_repo = InMemoryContextProfileRepository()
+    response = LLMResponse(
+        content="",
+        intent="SET_CONTEXT",
+        slots={"action": "SET_CONTEXT", "context_mode": "SLEEPING"},
+        metadata={"confidence": {"intent": 0.95, "action": 0.9, "context_mode": 0.92}},
+    )
+    agent = _agent(response, context_profile_repository=ctx_repo)
+    text = "I am sleeping. Ask why they called, take a message, only mark it urgent if necessary."
+
+    await agent.handle_input(user_id="u1", text=text, conversation_id="c1")
+
+    assert ctx_repo.active_user_instructions(user_id="u1") == text
+
+
+async def test_confirmed_set_context_captures_the_original_turn_s_text_not_the_confirmation_word():
+    """The turn that actually confirms a clarified SET_CONTEXT just says
+    "yes" - the caller's real instructions were on the *first* turn. The
+    tool must receive that original wording, not the word "yes"."""
+    ctx_repo = InMemoryContextProfileRepository()
+    response = LLMResponse(
+        content="",
+        intent="SET_CONTEXT",
+        slots={"action": "SET_CONTEXT", "context_mode": "MEETING"},
+        metadata={"confidence": {"intent": 0.9, "action": 0.5, "context_mode": 0.9}},
+    )
+    agent = _agent(response, context_profile_repository=ctx_repo)
+    original_text = "I'm in a meeting, take a message and only interrupt me if it's urgent"
+
+    await agent.handle_input(user_id="u1", text=original_text, conversation_id="c1")
+    await agent.handle_input(user_id="u1", text="yes", conversation_id="c1")
+
+    assert ctx_repo.active_user_instructions(user_id="u1") == original_text
+
+
 async def test_set_context_action_without_a_context_mode_fails_cleanly():
     ctx_repo = InMemoryContextProfileRepository()
     response = LLMResponse(
@@ -380,3 +416,114 @@ async def test_unknown_caller_transfer_request_hands_off():
         user_id="u1", text="put me through to him now", conversation_id="c1"
     )
     assert action.payload["policy_decision"] == "handoff"
+
+
+# --- Context instructions actually influence caller handling (real, not
+# just stored - see app/agent/response.py's _compose_contextual_reply) ---
+
+
+async def _general_conversation_agent(context_profile: dict | None):
+    """A caller's ordinary turn with no specific classified action (Brain
+    v3-shaped: empty content, GENERAL_CONVERSATION intent, no action
+    slot) while `context_profile` is active - the real scenario this
+    round's context-instructions-execution fix targets."""
+    response = LLMResponse(content="", intent="GENERAL_CONVERSATION", slots={}, metadata={})
+    context = ConversationContext(user_id="u1", contact=None, context_profile=context_profile)
+    return _agent(response, context=context)
+
+
+async def test_active_context_with_literal_instructions_changes_the_reply():
+    """The whole point of this round: the SAME caller turn gets a
+    DIFFERENT reply depending on the owner's literal instructions -
+    proving they actually drive behavior, not just sit in Postgres."""
+    with_ask_reason = await _general_conversation_agent(
+        {
+            "name": "SLEEPING",
+            "instructions": "User is asleep and does not want to be disturbed.",
+            "user_instructions": "Ask why they called, take a message, only mark urgent if necessary.",
+        }
+    )
+    plain = await _general_conversation_agent(
+        {
+            "name": "SLEEPING",
+            "instructions": "User is asleep and does not want to be disturbed.",
+            "user_instructions": None,
+        }
+    )
+
+    reply_with_instructions = (
+        await with_ask_reason.handle_input(user_id="u1", text="Hi, is Aniket there?", conversation_id="c1")
+    ).payload["reply"]
+    reply_plain = (
+        await plain.handle_input(user_id="u1", text="Hi, is Aniket there?", conversation_id="c1")
+    ).payload["reply"]
+
+    assert reply_with_instructions != reply_plain
+    assert "what this is about" in reply_with_instructions.lower()
+    assert "asleep" in reply_with_instructions.lower()
+
+
+async def test_no_active_context_still_uses_the_old_generic_fallback():
+    """Regression check: when there's genuinely no active context, behavior
+    is unchanged from before this round."""
+    agent = await _general_conversation_agent(None)
+    reply = (
+        await agent.handle_input(user_id="u1", text="Hi, is Aniket there?", conversation_id="c1")
+    ).payload["reply"]
+    assert "not sure how to respond" in reply.lower()
+
+
+# --- Multilingual response selection (new this round) ---
+
+
+async def test_hindi_language_produces_a_real_hindi_reply():
+    agent = await _general_conversation_agent({"name": "SLEEPING", "user_instructions": None})
+    action = await agent.handle_input(
+        user_id="u1", text="नमस्ते, अनिकेत से बात हो सकती है?", conversation_id="c1", language="hi"
+    )
+    assert action.payload["language"] == "hi"
+    assert "सो रहे" in action.payload["reply"]
+
+
+async def test_hinglish_language_produces_a_real_hinglish_reply():
+    agent = await _general_conversation_agent({"name": "SLEEPING", "user_instructions": None})
+    action = await agent.handle_input(
+        user_id="u1",
+        text="Hi, Aniket se baat karni thi",
+        conversation_id="c1",
+        language="hi-Latn",
+    )
+    assert action.payload["language"] == "hi-Latn"
+    assert "so rahe" in action.payload["reply"].lower()
+
+
+async def test_english_language_produces_a_real_english_reply():
+    agent = await _general_conversation_agent({"name": "SLEEPING", "user_instructions": None})
+    action = await agent.handle_input(
+        user_id="u1", text="Can you ask Aniket to call me back?", conversation_id="c1", language="en"
+    )
+    assert action.payload["language"] == "en"
+    assert "asleep" in action.payload["reply"].lower()
+
+
+async def test_language_switches_mid_call_turn_by_turn():
+    """The same conversation, same ConversationState/session, must follow
+    the caller's language turn by turn - never locked to the first turn's
+    language."""
+    agent = await _general_conversation_agent({"name": "MEETING", "user_instructions": None})
+
+    hindi_turn = await agent.handle_input(
+        user_id="u1", text="अनिकेत से बात हो सकती है?", conversation_id="c1", language="hi"
+    )
+    english_turn = await agent.handle_input(
+        user_id="u1", text="Can you ask him to call me back?", conversation_id="c1", language="en"
+    )
+    hinglish_turn = await agent.handle_input(
+        user_id="u1", text="Achha, theek hai, bol dena", conversation_id="c1", language="hi-Latn"
+    )
+
+    assert hindi_turn.payload["language"] == "hi"
+    assert english_turn.payload["language"] == "en"
+    assert hinglish_turn.payload["language"] == "hi-Latn"
+    replies = {hindi_turn.payload["reply"], english_turn.payload["reply"], hinglish_turn.payload["reply"]}
+    assert len(replies) == 3  # genuinely different text per language, not one fixed reply
